@@ -38,12 +38,12 @@ var dissolveChars = []rune{'░', '·'}
 // wordmarkLines is the ASCII-art "TOOLSNIFF" wordmark rendered on the
 // splash screen.
 var wordmarkLines = []string{
-	`      ████████╗ ██████╗  ██████╗ ██╗         ███████╗███╗   ██╗██╗`,
-	`      ╚══██╔══╝██╔═══██╗██╔═══██╗██║         ██╔════╝████╗  ██║██║`,
-	`         ██║   ██║   ██║██║   ██║██║         ███████╗██╔██╗ ██║██║`,
-	`         ██║   ██║   ██║██║   ██║██║         ╚════██║██║╚██╗██║██║`,
-	`         ██║   ╚██████╔╝╚██████╔╝███████╗    ███████║██║ ╚████║██║`,
-	`         ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝    ╚══════╝╚═╝  ╚═══╝╚═╝`,
+	`████████╗ ██████╗  ██████╗ ██╗         ███████╗███╗   ██╗██╗███████╗███████╗`,
+	`╚══██╔══╝██╔═══██╗██╔═══██╗██║         ██╔════╝████╗  ██║██║██╔════╝██╔════╝`,
+	`   ██║   ██║   ██║██║   ██║██║         ███████╗██╔██╗ ██║██║█████╗  █████╗`,
+	`   ██║   ██║   ██║██║   ██║██║         ╚════██║██║╚██╗██║██║██╔══╝  ██╔══╝`,
+	`   ██║   ╚██████╔╝╚██████╔╝███████╗    ███████║██║ ╚████║██║██║     ██║`,
+	`   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝    ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝`,
 }
 
 var (
@@ -143,16 +143,35 @@ func renderSplash(lines []string, width, height int) string {
 		width, height = 80, 24
 	}
 
-	styledWordmark := make([]string, len(lines))
-	for i, l := range lines {
-		styledWordmark[i] = wordmarkStyle.Render(l)
-	}
-	wordmark := lipgloss.JoinVertical(lipgloss.Left, styledWordmark...)
-
 	versionLine := versionStyle.Render("toolsniff  v" + version)
 
-	block := lipgloss.JoinVertical(lipgloss.Center, wordmark, "", versionLine)
+	var block string
+	if width-2 < wordmarkWidth() {
+		// Terminal too narrow for the ASCII wordmark: it would overflow the
+		// border and get clipped by the terminal itself. Fall back to a
+		// plain text lockup instead, same graceful-degradation approach the
+		// main frame's header uses below its own narrow-width threshold.
+		block = lipgloss.JoinVertical(lipgloss.Center, wordmarkStyle.Render("◆ toolsniff"), "", versionLine)
+	} else {
+		styledWordmark := make([]string, len(lines))
+		for i, l := range lines {
+			styledWordmark[i] = wordmarkStyle.Render(l)
+		}
+		wordmark := lipgloss.JoinVertical(lipgloss.Left, styledWordmark...)
+		block = lipgloss.JoinVertical(lipgloss.Center, wordmark, "", versionLine)
+	}
 
 	inner := lipgloss.Place(width-2, height-2, lipgloss.Center, lipgloss.Center, block)
 	return splashBorder.Width(width - 2).Height(height - 2).Render(inner)
+}
+
+// wordmarkWidth returns the widest line in wordmarkLines, in cells.
+func wordmarkWidth() int {
+	max := 0
+	for _, l := range wordmarkLines {
+		if w := lipgloss.Width(l); w > max {
+			max = w
+		}
+	}
+	return max
 }
