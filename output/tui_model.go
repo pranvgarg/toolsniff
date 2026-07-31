@@ -28,6 +28,11 @@ type tuiModel struct {
 	regPath    string
 	statusMsg  string
 	warnings   []scanner.Warning
+
+	width, height int
+
+	splashPhase splashPhase
+	splashLines []string
 }
 
 func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) tuiModel {
@@ -79,13 +84,20 @@ func itemsFor(tools []model.Tool) []list.Item {
 	return items
 }
 
-func (m tuiModel) Init() tea.Cmd { return nil }
+func (m tuiModel) Init() tea.Cmd { return splashHoldCmd() }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.list.SetSize(msg.Width, msg.Height-4)
+	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width, m.height = wsMsg.Width, wsMsg.Height
+		m.list.SetSize(wsMsg.Width, wsMsg.Height-4)
 		return m, nil
+	}
+
+	if m.splashPhase != splashDone {
+		return m.updateSplash(msg)
+	}
+
+	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.list.FilterState() == list.Filtering {
 			var cmd tea.Cmd
@@ -125,6 +137,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m tuiModel) View() string {
+	if m.splashPhase != splashDone {
+		return renderSplash(m.splashLines, m.width, m.height)
+	}
+
 	tabBar := renderTabBar(m.tabs, m.activeTab, m.toolsBySrc)
 	footer := footerStyle.Render("↑↓ move · tab switch · / filter · d diff · s save · q quit")
 	status := ""
