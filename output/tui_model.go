@@ -314,6 +314,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		m.statusMsg = ""
+		m.resizeContent()
 
 		// ctrl+c must always quit, even while filtering: the filtering
 		// branch below returns early for every key, which would otherwise
@@ -383,6 +384,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.statusMsg = fmt.Sprintf("saved baseline: %d tools", len(m.realTools))
 			}
+			m.resizeContent()
 			return m, nil
 		case key.Matches(keyMsg, m.keys.Diff):
 			for i, t := range m.tabs {
