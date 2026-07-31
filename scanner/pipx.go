@@ -20,11 +20,11 @@ func NewPipxScanner(runner CommandRunner) *PipxScanner {
 func (s *PipxScanner) Name() string { return "pipx" }
 
 func (s *PipxScanner) Scan() ([]model.Tool, error) {
-	out, runErr := s.runner("pipx", "list", "--json")
-	if len(out) == 0 {
-		if runErr != nil {
-			return nil, fmt.Errorf("pipx: %w", runErr)
-		}
+	out, err := runTolerant(s.runner, "pipx", "pipx", "list", "--json")
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
 		return nil, nil
 	}
 

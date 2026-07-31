@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/output"
@@ -46,6 +47,12 @@ func main() {
 	flag.Parse()
 
 	tools, warnings := scanner.RunAll(buildScanners())
+	sort.Slice(tools, func(i, j int) bool {
+		if tools[i].Source != tools[j].Source {
+			return tools[i].Source < tools[j].Source
+		}
+		return tools[i].Name < tools[j].Name
+	})
 	realTools, npxHistory := splitNPXHistory(tools)
 
 	regPath := registry.DefaultRegistryPath()
@@ -62,9 +69,15 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("saved baseline: %d tools\n", len(realTools))
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", w.Source, w.Err)
+		}
 
 	case *diffFlag:
 		fmt.Print(output.RenderDiff(diff))
+		for _, w := range warnings {
+			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", w.Source, w.Err)
+		}
 
 	case *jsonFlag:
 		data, err := output.RenderJSON(realTools, npxHistory, diff, warnings)

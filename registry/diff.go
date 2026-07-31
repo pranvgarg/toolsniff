@@ -39,7 +39,15 @@ func ComputeDiff(old, new []model.Tool) Diff {
 		}
 	}
 
-	sort.Slice(added, func(i, j int) bool { return added[i].Name < added[j].Name })
-	sort.Slice(removed, func(i, j int) bool { return removed[i].Name < removed[j].Name })
+	byBothKeys := func(tools []model.Tool) func(i, j int) bool {
+		return func(i, j int) bool {
+			if tools[i].Source != tools[j].Source {
+				return tools[i].Source < tools[j].Source
+			}
+			return tools[i].Name < tools[j].Name
+		}
+	}
+	sort.Slice(added, byBothKeys(added))
+	sort.Slice(removed, byBothKeys(removed))
 	return Diff{Added: added, Removed: removed}
 }

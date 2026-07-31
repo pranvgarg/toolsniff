@@ -27,14 +27,17 @@ type tuiModel struct {
 	realTools  []model.Tool
 	regPath    string
 	statusMsg  string
+	warnings   []scanner.Warning
 }
 
-func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, regPath string) tuiModel {
+func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) tuiModel {
 	toolsBySrc := map[string][]model.Tool{}
 	for _, t := range realTools {
 		toolsBySrc[t.Source] = append(toolsBySrc[t.Source], t)
 	}
-	toolsBySrc["npx-history"] = npxHistory
+	if len(npxHistory) > 0 {
+		toolsBySrc["npx-history"] = npxHistory
+	}
 
 	if len(diff.Added) > 0 || len(diff.Removed) > 0 {
 		newTab := append([]model.Tool{}, diff.Added...)
@@ -64,6 +67,7 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, regPath
 		list:       l,
 		realTools:  realTools,
 		regPath:    regPath,
+		warnings:   warnings,
 	}
 }
 
@@ -128,6 +132,9 @@ func (m tuiModel) View() string {
 		status = statusStyle.Render(m.statusMsg)
 	}
 	parts := []string{tabBar, m.list.View()}
+	for _, w := range m.warnings {
+		parts = append(parts, footerStyle.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
+	}
 	if status != "" {
 		parts = append(parts, status)
 	}
@@ -148,13 +155,9 @@ func renderTabBar(tabs []string, active int, toolsBySrc map[string][]model.Tool)
 	return strings.Join(parts, "  ")
 }
 
-// RunTUI launches the interactive Bubbletea program. warnings is accepted
-// for interface symmetry with the other renderers; v1 surfaces warnings via
-// the status line only when the save action itself fails (see "s" handler
-// above) — a startup warnings banner is a documented follow-up, not part of
-// this task.
+// RunTUI launches the interactive Bubbletea program.
 func RunTUI(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) error {
-	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, regPath), tea.WithAltScreen())
+	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, warnings, regPath), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

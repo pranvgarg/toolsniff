@@ -41,7 +41,7 @@ tools tend to get installed, and merges the results into one view:
 
 ## Install
 
-Requires Go 1.22+.
+Requires Go 1.26+.
 
 ```bash
 git clone https://github.com/pranvgarg/toolsniff.git

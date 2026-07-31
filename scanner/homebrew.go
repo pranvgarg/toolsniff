@@ -1,18 +1,18 @@
 package scanner
 
 import (
-	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pranvgarg/toolsniff/model"
 )
 
 func runBrewList(runner CommandRunner, source, flag string) ([]model.Tool, error) {
-	out, runErr := runner("brew", "list", flag, "-1")
-	if len(out) == 0 {
-		if runErr != nil {
-			return nil, fmt.Errorf("brew: %w", runErr)
-		}
+	out, err := runTolerant(runner, source, "brew", "list", flag, "-1")
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
 		return nil, nil
 	}
 
@@ -25,6 +25,7 @@ func runBrewList(runner CommandRunner, source, flag string) ([]model.Tool, error
 		}
 		tools = append(tools, model.Tool{Name: name, Source: source})
 	}
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools, nil
 }
 

@@ -26,7 +26,7 @@ func TestComputeDiffAddedAndRemoved(t *testing.T) {
 	}
 }
 
-func TestComputeDiffSameSourceDifferentNameNotConfused(t *testing.T) {
+func TestComputeDiffSameNameDifferentSourceNotConfused(t *testing.T) {
 	old := []model.Tool{{Name: "gh", Source: "brew-formula"}}
 	current := []model.Tool{{Name: "gh", Source: "path"}}
 

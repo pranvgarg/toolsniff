@@ -20,11 +20,11 @@ func NewNPMScanner(runner CommandRunner) *NPMScanner {
 func (s *NPMScanner) Name() string { return "npm" }
 
 func (s *NPMScanner) Scan() ([]model.Tool, error) {
-	out, runErr := s.runner("npm", "ls", "-g", "--depth=0", "--json")
-	if len(out) == 0 {
-		if runErr != nil {
-			return nil, fmt.Errorf("npm: %w", runErr)
-		}
+	out, err := runTolerant(s.runner, "npm", "npm", "ls", "-g", "--depth=0", "--json")
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
 		return nil, nil
 	}
 

@@ -18,7 +18,11 @@ type ApplicationsScanner struct {
 }
 
 func NewApplicationsScanner(dir string, keywords []string) *ApplicationsScanner {
-	return &ApplicationsScanner{dir: dir, keywords: keywords}
+	lowered := make([]string, len(keywords))
+	for i, kw := range keywords {
+		lowered[i] = strings.ToLower(kw)
+	}
+	return &ApplicationsScanner{dir: dir, keywords: lowered}
 }
 
 // DefaultApplicationsDir returns the standard macOS /Applications path.
