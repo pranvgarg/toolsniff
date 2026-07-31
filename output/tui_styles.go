@@ -10,11 +10,14 @@ var (
 	colorCyan  = lipgloss.Color("#7fd8c4")
 	colorMuted = lipgloss.Color("#5c6577")
 
-	activeTabStyle     = lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Underline(true)
-	activeNewTabStyle  = lipgloss.NewStyle().Foreground(colorAmber).Bold(true).Underline(true)
-	tabStyle           = lipgloss.NewStyle().Foreground(colorMuted)
-	newTabStyle        = lipgloss.NewStyle().Foreground(colorAmber)
-	footerStyle        = lipgloss.NewStyle().Foreground(colorMuted).MarginTop(1)
+	activeTabStyle    = lipgloss.NewStyle().Foreground(colorCyan).Bold(true).Underline(true)
+	activeNewTabStyle = lipgloss.NewStyle().Foreground(colorAmber).Bold(true).Underline(true)
+	tabStyle          = lipgloss.NewStyle().Foreground(colorMuted)
+	newTabStyle       = lipgloss.NewStyle().Foreground(colorAmber)
+	// footerStyle intentionally carries no margin: footer line counts must
+	// be exact (see tuiModel.footerLines), since they directly drive the
+	// content pane's height budget.
+	footerStyle        = lipgloss.NewStyle().Foreground(colorMuted)
 	statusStyle        = lipgloss.NewStyle().Foreground(colorAmber)
 	headerBorderStyle  = lipgloss.NewStyle().Foreground(colorMuted)
 	headerTitleStyle   = lipgloss.NewStyle().Foreground(colorAmber).Bold(true)

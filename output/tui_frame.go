@@ -48,8 +48,8 @@ func sidebarDims(tabs []string, toolsBySrc map[string][]model.Tool) (labelWidth,
 	return labelWidth, countWidth
 }
 
-// sidebarWidth returns the total rendered width of the sidebar column
-// (excluding the leading number+space, which is included).
+// sidebarWidth returns the total rendered width of the sidebar column,
+// including the leading number+space prefix.
 func sidebarWidth(tabs []string, toolsBySrc map[string][]model.Tool) int {
 	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc)
 	// "N " + label + " " + count
@@ -77,13 +77,6 @@ func contentPaneHeight(height, footerRows int) int {
 	return h
 }
 
-// footerRowCount returns the number of lines footer will render as. The
-// footer is normally a single line, but help.Model.View can return a
-// multi-line block when the full key-binding help ("?") is expanded.
-func footerRowCount(footer string) int {
-	return strings.Count(footer, "\n") + 1
-}
-
 // fitWidth pads or truncates s (ANSI-aware) to exactly width display cells.
 func fitWidth(s string, width int) string {
 	if width < 0 {
@@ -104,6 +97,28 @@ func rightAlign(s string, width int) string {
 	return strings.Repeat(" ", width-w) + s
 }
 
+// truncateTail truncates s to at most width display cells by dropping
+// characters from the *front* and prefixing an ellipsis, so the tail of s
+// survives. Used for the content table's Version column when it's showing
+// a filesystem path fallback, where the suffix (e.g. the binary name) is
+// far more identifying than the shared prefix every path starts with.
+func truncateTail(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+	r := []rune(s)
+	for len(r) > 0 && lipgloss.Width("…"+string(r)) > width {
+		r = r[1:]
+	}
+	return "…" + string(r)
+}
+
 // renderHeaderLine builds the top border line, with the wordmark, tagline,
 // and stats stamp embedded directly into the border, e.g.:
 //
@@ -114,11 +129,34 @@ func renderHeaderLine(width int, title, tagline, stats string) string {
 		inner = 0
 	}
 
-	left := headerBorderStyle.Render("─ ") + headerTitleStyle.Render(title) +
-		headerBorderStyle.Render(" ─ ") + headerTaglineStyle.Render(tagline) + headerBorderStyle.Render(" ")
-	right := headerBorderStyle.Render(" ") + headerStatsStyle.Render(stats) + headerBorderStyle.Render(" ─")
+	build := func(tagline, stats string) (left, right string) {
+		left = headerBorderStyle.Render("─ ") + headerTitleStyle.Render(title)
+		if tagline != "" {
+			left += headerBorderStyle.Render(" ─ ") + headerTaglineStyle.Render(tagline)
+		}
+		left += headerBorderStyle.Render(" ")
+		right = headerBorderStyle.Render(" ")
+		if stats != "" {
+			right += headerStatsStyle.Render(stats) + headerBorderStyle.Render(" ")
+		}
+		right += headerBorderStyle.Render("─")
+		return left, right
+	}
 
+	// At narrow widths (~60-64 cols) the fixed-width left/right components
+	// don't fit alongside the corners. Rather than let the line overflow
+	// and get clipped, progressively drop the tagline, then the stats
+	// stamp, until it fits.
+	left, right := build(tagline, stats)
 	fillLen := inner - lipgloss.Width(left) - lipgloss.Width(right)
+	if fillLen < 1 {
+		left, right = build("", stats)
+		fillLen = inner - lipgloss.Width(left) - lipgloss.Width(right)
+	}
+	if fillLen < 1 {
+		left, right = build("", "")
+		fillLen = inner - lipgloss.Width(left) - lipgloss.Width(right)
+	}
 	if fillLen < 1 {
 		fillLen = 1
 	}
@@ -181,12 +219,18 @@ func (m tuiModel) renderFrame() string {
 		totalTools += len(m.toolsBySrc[t])
 		sourceCount++
 	}
+	if totalTools == 0 {
+		// On a genuinely empty scan, tabs falls back to a ["npm"]
+		// placeholder so there's something to render, but that's not a
+		// real source: report 0, matching --list's "0 tools across 0
+		// sources" convention for an empty machine.
+		sourceCount = 0
+	}
 	stats := fmt.Sprintf("%d tools · %d sources", totalTools, sourceCount)
 
 	top := renderHeaderLine(width, "◆ toolsniff", "dev & AI CLI inventory", stats)
 
-	footerText := m.footerHint()
-	footerLines := strings.Split(footerText, "\n")
+	footerLines := m.footerLines()
 
 	sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
 	cWidth := contentPaneWidth(width, sbWidth)

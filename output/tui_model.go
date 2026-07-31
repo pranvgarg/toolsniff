@@ -194,7 +194,9 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 }
 
 // versionOrPath returns a tool's version, falling back to its path when no
-// version was detected. This mirrors the old toolItem.Description() logic.
+// version was detected, so every row always has something informative in
+// its Version column even for tools where scanning couldn't determine a
+// version string.
 func versionOrPath(t model.Tool) string {
 	if t.Version != "" {
 		return t.Version
@@ -227,7 +229,14 @@ func rowsFor(tools []model.Tool, filter string) []table.Row {
 		if filter != "" && !strings.Contains(strings.ToLower(t.Name), lowerFilter) {
 			continue
 		}
-		rows = append(rows, table.Row{t.Name, rightAlign(versionOrPath(t), contentVersionColWidth)})
+		val := versionOrPath(t)
+		if t.Version == "" {
+			// Path fallback: right-truncate (keep the tail) so the more
+			// identifying suffix (e.g. the binary name) survives, instead
+			// of showing an undifferentiated "/opt/homebrew/…" prefix.
+			val = truncateTail(val, contentVersionColWidth)
+		}
+		rows = append(rows, table.Row{t.Name, rightAlign(val, contentVersionColWidth)})
 	}
 	return rows
 }
@@ -245,7 +254,7 @@ func (m *tuiModel) rebuildContent() {
 // expanded via "?"), so this must be called both on every WindowSizeMsg
 // and whenever something else could change the footer's line count.
 func (m *tuiModel) resizeContent() {
-	footerRows := footerRowCount(m.footerHint())
+	footerRows := len(m.footerLines())
 	if m.width > 0 && m.width < compactWidthThreshold {
 		m.help.SetWidth(m.width)
 		h := m.height - 1 - footerRows // compact strip + footer
@@ -275,7 +284,16 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// generation tag and schedule a settle check. If another resize
 		// arrives before the tick fires, its tag will no longer match
 		// m.resizeTag and the stale tick is dropped.
+		firstResize := m.width == 0 && m.height == 0
 		m.width, m.height = wsMsg.Width, wsMsg.Height
+		if firstResize {
+			// Run the (usually debounced) re-layout synchronously for the
+			// very first resize, so a keypress that dismisses the splash
+			// before the debounce would otherwise fire never sees an
+			// unconfigured/collapsed table.
+			m.resizeContent()
+			return m, nil
+		}
 		m.resizeTag++
 		tag := m.resizeTag
 		return m, tea.Tick(resizeDebounce, func(_ time.Time) tea.Msg {
@@ -295,15 +313,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		m.statusMsg = ""
+
+		// ctrl+c must always quit, even while filtering: the filtering
+		// branch below returns early for every key, which would otherwise
+		// swallow it and leave esc as the only way out.
+		if keyMsg.String() == "ctrl+c" {
+			return m, tea.Quit
+		}
+
 		if m.filtering {
 			switch keyMsg.String() {
 			case "esc":
 				m.filtering = false
 				m.filterQuery = ""
 				m.rebuildContent()
+				m.resizeContent()
 				return m, nil
 			case "enter":
 				m.filtering = false
+				m.resizeContent()
 				return m, nil
 			case "backspace":
 				if m.filterQuery != "" {
@@ -326,6 +355,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case key.Matches(keyMsg, m.keys.Filter):
 			m.filtering = true
+			m.resizeContent()
 			return m, nil
 		case key.Matches(keyMsg, m.keys.NextTab):
 			m.activeTab = (m.activeTab + 1) % len(m.tabs)
@@ -394,6 +424,26 @@ func (m tuiModel) footerHint() string {
 	return m.help.View(m.keys)
 }
 
+// footerLines returns every line the footer needs to render, in order:
+// scanner warnings, the save-status message (if set), then the
+// keybinding/filter hint. This is the single source of truth for "how many
+// lines does the footer need" (used to budget content-pane height) and
+// "what does the footer contain" (used by both renderFrame and the compact
+// layout) — so nothing gets appended after the frame where it could fall
+// outside the fixed height budget and be silently clipped by the alt-screen
+// renderer.
+func (m tuiModel) footerLines() []string {
+	var lines []string
+	for _, w := range m.warnings {
+		lines = append(lines, footerStyle.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
+	}
+	if m.statusMsg != "" {
+		lines = append(lines, statusStyle.Render(m.statusMsg))
+	}
+	lines = append(lines, strings.Split(m.footerHint(), "\n")...)
+	return lines
+}
+
 func (m tuiModel) View() tea.View {
 	if m.splashPhase != splashDone {
 		view := tea.NewView(renderSplash(m.splashLines, m.width, m.height))
@@ -403,22 +453,13 @@ func (m tuiModel) View() tea.View {
 
 	var body string
 	if m.width > 0 && m.width < compactWidthThreshold {
-		body = m.renderCompact() + "\n" + m.content.View()
+		footer := strings.Join(m.footerLines(), "\n")
+		body = m.renderCompact() + "\n" + m.content.View() + "\n" + footer
 	} else {
 		body = m.renderFrame()
 	}
 
-	parts := []string{body}
-	for _, w := range m.warnings {
-		parts = append(parts, footerStyle.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
-	}
-	if m.statusMsg != "" {
-		parts = append(parts, statusStyle.Render(m.statusMsg))
-	}
-	if m.width > 0 && m.width < compactWidthThreshold {
-		parts = append(parts, footerStyle.Render(m.footerHint()))
-	}
-	view := tea.NewView(strings.Join(parts, "\n"))
+	view := tea.NewView(body)
 	view.AltScreen = true
 	return view
 }
