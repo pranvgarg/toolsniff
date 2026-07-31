@@ -153,7 +153,7 @@ func (m tuiModel) renderFrame() string {
 	totalTools := 0
 	sourceCount := 0
 	for _, t := range m.tabs {
-		if t == "new" {
+		if t == "new" || t == "npx-history" {
 			continue
 		}
 		totalTools += len(m.toolsBySrc[t])
