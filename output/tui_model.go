@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -14,6 +15,18 @@ import (
 	"github.com/pranvgarg/toolsniff/registry"
 	"github.com/pranvgarg/toolsniff/scanner"
 )
+
+// resizeDebounce is how long the TUI waits for terminal resizing to settle
+// before re-running the (relatively expensive) layout recalculation in
+// resizeContent. Rapid resize events during a drag are coalesced into a
+// single re-layout once the user stops resizing.
+const resizeDebounce = 120 * time.Millisecond
+
+// resizeSettledMsg is sent after resizeDebounce has elapsed since a
+// WindowSizeMsg was received. It carries a snapshot of the resize
+// generation tag at the time it was scheduled, so a stale message from a
+// superseded resize can be detected and dropped.
+type resizeSettledMsg struct{ tag int }
 
 // tabOrder is the fixed, meaningful order tabs appear in: real sources
 // first (in scan-priority order), then npx-history (informational), then
@@ -44,6 +57,7 @@ type tuiModel struct {
 	help help.Model
 
 	width, height int
+	resizeTag     int
 
 	splashPhase splashPhase
 	splashLines []string
@@ -255,8 +269,24 @@ func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
+		// Update dimensions immediately so View()'s border sizing always
+		// reflects the current terminal size, but debounce the (more
+		// expensive) column/mode re-layout in resizeContent: bump the
+		// generation tag and schedule a settle check. If another resize
+		// arrives before the tick fires, its tag will no longer match
+		// m.resizeTag and the stale tick is dropped.
 		m.width, m.height = wsMsg.Width, wsMsg.Height
-		m.resizeContent()
+		m.resizeTag++
+		tag := m.resizeTag
+		return m, tea.Tick(resizeDebounce, func(_ time.Time) tea.Msg {
+			return resizeSettledMsg{tag: tag}
+		})
+	}
+
+	if settleMsg, ok := msg.(resizeSettledMsg); ok {
+		if settleMsg.tag == m.resizeTag {
+			m.resizeContent()
+		}
 		return m, nil
 	}
 
