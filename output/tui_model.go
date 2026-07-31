@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/timer"
 	tea "charm.land/bubbletea/v2"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/registry"
@@ -33,6 +34,7 @@ type tuiModel struct {
 
 	splashPhase splashPhase
 	splashLines []string
+	splashTimer timer.Model
 }
 
 func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) tuiModel {
@@ -67,12 +69,13 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 	l.Title = tabs[0]
 
 	return tuiModel{
-		tabs:       tabs,
-		toolsBySrc: toolsBySrc,
-		list:       l,
-		realTools:  realTools,
-		regPath:    regPath,
-		warnings:   warnings,
+		tabs:        tabs,
+		toolsBySrc:  toolsBySrc,
+		list:        l,
+		realTools:   realTools,
+		regPath:     regPath,
+		warnings:    warnings,
+		splashTimer: newSplashTimer(),
 	}
 }
 
@@ -84,7 +87,7 @@ func itemsFor(tools []model.Tool) []list.Item {
 	return items
 }
 
-func (m tuiModel) Init() tea.Cmd { return splashHoldCmd() }
+func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {

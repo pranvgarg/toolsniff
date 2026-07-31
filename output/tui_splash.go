@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"time"
 
+	"charm.land/bubbles/v2/timer"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -51,16 +52,14 @@ var (
 	splashBorder  = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(colorMuted)
 )
 
-// splashHoldDoneMsg fires when the initial hold period ends.
-type splashHoldDoneMsg struct{}
-
 // splashDissolveTickMsg fires on each dissolve animation frame.
 type splashDissolveTickMsg struct{}
 
-func splashHoldCmd() tea.Cmd {
-	return tea.Tick(splashHoldDuration, func(time.Time) tea.Msg {
-		return splashHoldDoneMsg{}
-	})
+// newSplashTimer builds the timer.Model that drives the splash screen's
+// hold phase. Its interval is set to the full hold duration so it fires
+// exactly once, delivering a timer.TimeoutMsg at ~splashHoldDuration.
+func newSplashTimer() timer.Model {
+	return timer.New(splashHoldDuration, timer.WithInterval(splashHoldDuration))
 }
 
 func splashDissolveCmd() tea.Cmd {
@@ -97,12 +96,19 @@ func dissolveWordmark(prob float64) []string {
 // keypress immediately dismisses the splash and consumes the event, so it
 // is never also interpreted as a normal TUI keybinding.
 func (m tuiModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		m.splashPhase = splashDone
 		m.splashLines = nil
 		return m, nil
-	case splashHoldDoneMsg:
+	case timer.TickMsg:
+		if m.splashPhase != splashHold {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.splashTimer, cmd = m.splashTimer.Update(msg)
+		return m, cmd
+	case timer.TimeoutMsg:
 		if m.splashPhase != splashHold {
 			return m, nil
 		}
