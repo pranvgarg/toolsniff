@@ -4,8 +4,8 @@ import (
 	"math/rand"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // version is the toolsniff version shown on the splash screen. It will
@@ -98,7 +98,7 @@ func dissolveWordmark(prob float64) []string {
 // is never also interpreted as a normal TUI keybinding.
 func (m tuiModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		m.splashPhase = splashDone
 		m.splashLines = nil
 		return m, nil

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/registry"
 	"github.com/pranvgarg/toolsniff/scanner"
@@ -98,7 +98,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.list.FilterState() == list.Filtering {
 			var cmd tea.Cmd
 			m.list, cmd = m.list.Update(msg)
@@ -136,9 +136,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m tuiModel) View() string {
+func (m tuiModel) View() tea.View {
 	if m.splashPhase != splashDone {
-		return renderSplash(m.splashLines, m.width, m.height)
+		view := tea.NewView(renderSplash(m.splashLines, m.width, m.height))
+		view.AltScreen = true
+		return view
 	}
 
 	tabBar := renderTabBar(m.tabs, m.activeTab, m.toolsBySrc)
@@ -155,7 +157,9 @@ func (m tuiModel) View() string {
 		parts = append(parts, status)
 	}
 	parts = append(parts, footer)
-	return strings.Join(parts, "\n")
+	view := tea.NewView(strings.Join(parts, "\n"))
+	view.AltScreen = true
+	return view
 }
 
 func renderTabBar(tabs []string, active int, toolsBySrc map[string][]model.Tool) string {
@@ -173,7 +177,7 @@ func renderTabBar(tabs []string, active int, toolsBySrc map[string][]model.Tool)
 
 // RunTUI launches the interactive Bubbletea program.
 func RunTUI(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) error {
-	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, warnings, regPath), tea.WithAltScreen())
+	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, warnings, regPath))
 	_, err := p.Run()
 	return err
 }
