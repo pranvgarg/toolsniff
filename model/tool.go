@@ -1,8 +1,9 @@
 package model
 
-// Tool represents a tool definition with name, description, and input schema.
+// Tool is a single installed CLI tool or application discovered by a scanner.
 type Tool struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	InputSchema map[string]interface{} `json:"input_schema"`
+	Name    string `json:"name"`
+	Source  string `json:"source"`
+	Version string `json:"version"`
+	Path    string `json:"path"`
 }
