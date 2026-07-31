@@ -2,8 +2,11 @@ package output
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/timer"
 	tea "charm.land/bubbletea/v2"
@@ -37,11 +40,95 @@ type tuiModel struct {
 	statusMsg   string
 	warnings    []scanner.Warning
 
+	keys keyMap
+	help help.Model
+
 	width, height int
 
 	splashPhase splashPhase
 	splashLines []string
 	splashTimer timer.Model
+}
+
+// keyMap defines every key binding the TUI recognizes, satisfying
+// help.KeyMap so it can be rendered directly via help.Model.View. Up/Down
+// are included for display purposes only: table.Model handles ↑/↓/j/k
+// movement internally and these bindings are never dispatched against.
+type keyMap struct {
+	Up      key.Binding
+	Down    key.Binding
+	PrevTab key.Binding
+	NextTab key.Binding
+	JumpTab key.Binding
+	Filter  key.Binding
+	Diff    key.Binding
+	Save    key.Binding
+	Help    key.Binding
+	Quit    key.Binding
+}
+
+// defaultKeyMap is the TUI's fixed keybinding set.
+var defaultKeyMap = keyMap{
+	Up: key.NewBinding(
+		key.WithKeys("up", "k"),
+		key.WithHelp("↑/k", "move up"),
+	),
+	Down: key.NewBinding(
+		key.WithKeys("down", "j"),
+		key.WithHelp("↓/j", "move down"),
+	),
+	PrevTab: key.NewBinding(
+		key.WithKeys("left", "h"),
+		key.WithHelp("←/h", "prev tab"),
+	),
+	NextTab: key.NewBinding(
+		key.WithKeys("right", "l", "tab"),
+		key.WithHelp("→/l/tab", "next tab"),
+	),
+	JumpTab: key.NewBinding(
+		key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"),
+		key.WithHelp("1-9", "jump to tab"),
+	),
+	Filter: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/", "filter"),
+	),
+	Diff: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "diff"),
+	),
+	Save: key.NewBinding(
+		key.WithKeys("s"),
+		key.WithHelp("s", "save"),
+	),
+	Help: key.NewBinding(
+		key.WithKeys("?"),
+		key.WithHelp("?", "toggle help"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	),
+}
+
+// ShortHelp returns the handful of bindings shown in the collapsed footer.
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "move")),
+		key.NewBinding(key.WithKeys("left", "right", "tab"), key.WithHelp("←/→/tab", "switch tab")),
+		k.Filter,
+		k.Help,
+		k.Quit,
+	}
+}
+
+// FullHelp returns every binding, grouped into columns, for the expanded
+// help view toggled by "?".
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.PrevTab, k.NextTab, k.JumpTab},
+		{k.Filter, k.Diff, k.Save, k.Help, k.Quit},
+	}
 }
 
 func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) tuiModel {
@@ -86,6 +173,8 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 		realTools:   realTools,
 		regPath:     regPath,
 		warnings:    warnings,
+		keys:        defaultKeyMap,
+		help:        help.New(),
 		splashTimer: newSplashTimer(),
 	}
 }
@@ -141,6 +230,7 @@ func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = wsMsg.Width, wsMsg.Height
+		m.help.SetWidth(m.width)
 		if m.width > 0 && m.width < compactWidthThreshold {
 			h := m.height - 2 // compact strip + footer
 			if h < 1 {
@@ -190,31 +280,52 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		switch keyMsg.String() {
-		case "q", "ctrl+c":
+		switch {
+		case key.Matches(keyMsg, m.keys.Quit):
 			return m, tea.Quit
-		case "/":
+		case key.Matches(keyMsg, m.keys.Filter):
 			m.filtering = true
 			return m, nil
-		case "tab":
+		case key.Matches(keyMsg, m.keys.NextTab):
 			m.activeTab = (m.activeTab + 1) % len(m.tabs)
+			m.filtering = false
+			m.filterQuery = ""
 			m.rebuildContent()
 			return m, nil
-		case "s":
+		case key.Matches(keyMsg, m.keys.PrevTab):
+			m.activeTab = (m.activeTab - 1 + len(m.tabs)) % len(m.tabs)
+			m.filtering = false
+			m.filterQuery = ""
+			m.rebuildContent()
+			return m, nil
+		case key.Matches(keyMsg, m.keys.JumpTab):
+			if idx, err := strconv.Atoi(keyMsg.String()); err == nil && idx >= 1 && idx <= len(m.tabs) {
+				m.activeTab = idx - 1
+				m.filtering = false
+				m.filterQuery = ""
+				m.rebuildContent()
+			}
+			return m, nil
+		case key.Matches(keyMsg, m.keys.Save):
 			if err := registry.Save(m.regPath, m.realTools); err != nil {
 				m.statusMsg = "save failed: " + err.Error()
 			} else {
 				m.statusMsg = fmt.Sprintf("saved baseline: %d tools", len(m.realTools))
 			}
 			return m, nil
-		case "d":
+		case key.Matches(keyMsg, m.keys.Diff):
 			for i, t := range m.tabs {
 				if t == "new" {
 					m.activeTab = i
+					m.filtering = false
+					m.filterQuery = ""
 					m.rebuildContent()
 					break
 				}
 			}
+			return m, nil
+		case key.Matches(keyMsg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
 			return m, nil
 		}
 	}
@@ -238,7 +349,7 @@ func (m tuiModel) footerHint() string {
 		}
 		return fmt.Sprintf("/%s — %d %s (esc clear · enter apply)", m.filterQuery, n, unit)
 	}
-	return "↑↓ move · tab switch · / filter · d diff · s save · q quit"
+	return m.help.View(m.keys)
 }
 
 func (m tuiModel) View() tea.View {
