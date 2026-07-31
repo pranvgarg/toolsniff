@@ -21,6 +21,30 @@
 
 ---
 
+## Wave Overview
+
+Derived from each task's Interfaces block (Consumes/Produces), not authoring order. Skipped codebase research (step 1) — this is a greenfield project, nothing in the repo yet to ground dependency inference against. No clarifying questions were needed either: the dependency graph below falls out directly from the Interfaces blocks already written into each task, with one non-ambiguous judgment call noted under Wave 5.
+
+| Wave | Delivers | Tasks | Depends on |
+|---|---|---|---|
+| 1 | Shared data model | 1 | — |
+| 2 | Scanner contract, filesystem-based scanners, registry | 2, 4, 7, 8, 9, 10, 11 | Wave 1 |
+| 3 | Command-based scanners, all three renderers | 3, 5, 6, 12, 13, 14 | Wave 2 |
+| 4 | main.go wiring | 15 | Wave 3 |
+| 5 | README | 16 | Wave 4 |
+
+**Why Wave 2 groups scanner orchestration with registry and filesystem scanners:** none of `npx`/`cargo`/`applications`/`path`/`registry` consume `CommandRunner` — they only need `model.Tool` (Wave 1) — so per the Interfaces blocks they're exactly as unblocked as `scanner.go` itself. They land in the same wave as the `Scanner` interface because nothing in this set depends on anything else in it, which is what makes a wave valid, not because they're related in subject matter.
+
+**Why Wave 3 groups npm/homebrew/pipx with table/JSON/TUI:** the three command-based scanners need `CommandRunner` (Wave 2). The three renderers need `registry.Diff` and `scanner.Warning` (also Wave 2) — but nothing in the renderers depends on any specific scanner's output, only on the generic `[]model.Tool` shape. Six tasks, no interdependency between any of them, same wave.
+
+**The one judgment call — Task 16 (README) in its own Wave 5:** its Interfaces block says "Consumes: none" — by the letter of the algorithm it could sit in Wave 1. That's not a real option: the README documents install/usage instructions for the *built binary*, so it only makes sense to write after Wave 4 produces one. Not treating this as a question for you — there's no real second option here, just the algorithm's blind spot for documentation tasks that don't consume a Go interface but do depend on the thing being done.
+
+---
+
+## Wave 1: Shared Data Model
+
+**Gate:** `go test ./model/...` passes. This is the single type every other package imports — nothing downstream is trustworthy until this is verified green.
+
 ### Task 1: Go module + `model.Tool`
 
 **Files:**
@@ -103,6 +127,15 @@ git commit -m "Add model.Tool with JSON tags"
 ```
 
 ---
+
+## Wave 2: Package Contracts (scanner orchestration, filesystem scanners, registry)
+
+**Depends on:** Wave 1
+
+**Gate:** `go build ./...` succeeds and the following all pass:
+`go test ./scanner/... -run 'TestRunAll|TestNPXScanner|TestCargoScanner|TestApplicationsScanner|TestPathScanner'`
+`go test ./registry/...`
+Load-bearing: Wave 3 depends directly on the `Scanner` interface, `CommandRunner`, `RunAll`, and every `registry` function defined here. A silent failure here surfaces as confusing breakage two waves later.
 
 ### Task 2: Scanner interface + concurrent runner
 
@@ -262,148 +295,6 @@ Expected: both tests PASS.
 ```bash
 git add scanner/scanner.go scanner/scanner_test.go
 git commit -m "Add Scanner interface and concurrent RunAll orchestrator"
-```
-
----
-
-### Task 3: npm global scanner
-
-**Files:**
-- Create: `scanner/npm.go`
-- Test: `scanner/npm_test.go`
-
-**Interfaces:**
-- Consumes: `model.Tool`, `scanner.CommandRunner` (Task 2).
-- Produces: `scanner.NewNPMScanner(runner CommandRunner) *NPMScanner`, implementing `Scanner` with `Name() == "npm"`.
-
-- [ ] **Step 1: Write the failing test**
-
-```go
-// scanner/npm_test.go
-package scanner
-
-import (
-	"errors"
-	"testing"
-)
-
-func TestNPMScannerParsesGlobalPackages(t *testing.T) {
-	fixture := []byte(`{
-  "name": "lib",
-  "dependencies": {
-    "npm": { "version": "10.9.2" },
-    "opencode-ai": { "version": "1.18.4" }
-  }
-}`)
-	runner := func(name string, args ...string) ([]byte, error) {
-		if name != "npm" {
-			t.Fatalf("expected command 'npm', got %q", name)
-		}
-		return fixture, nil
-	}
-
-	s := NewNPMScanner(runner)
-	if s.Name() != "npm" {
-		t.Errorf("expected Name() == \"npm\", got %q", s.Name())
-	}
-
-	tools, err := s.Scan()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(tools) != 2 {
-		t.Fatalf("expected 2 tools, got %d: %+v", len(tools), tools)
-	}
-	if tools[0].Name != "npm" || tools[0].Version != "10.9.2" || tools[0].Source != "npm" {
-		t.Errorf("unexpected first tool: %+v", tools[0])
-	}
-	if tools[1].Name != "opencode-ai" || tools[1].Version != "1.18.4" {
-		t.Errorf("unexpected second tool: %+v", tools[1])
-	}
-}
-
-func TestNPMScannerNotInstalled(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
-		return nil, errors.New("exec: \"npm\": executable file not found in $PATH")
-	}
-	s := NewNPMScanner(runner)
-	tools, err := s.Scan()
-	if err == nil {
-		t.Fatal("expected an error when npm is not found")
-	}
-	if len(tools) != 0 {
-		t.Errorf("expected no tools on error, got %+v", tools)
-	}
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `go test ./scanner/... -run TestNPMScanner`
-Expected: FAIL — `NewNPMScanner` undefined.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```go
-// scanner/npm.go
-package scanner
-
-import (
-	"encoding/json"
-	"fmt"
-	"sort"
-
-	"github.com/pranvgarg/toolsniff/model"
-)
-
-// NPMScanner discovers globally installed npm packages via `npm ls -g`.
-type NPMScanner struct {
-	runner CommandRunner
-}
-
-func NewNPMScanner(runner CommandRunner) *NPMScanner {
-	return &NPMScanner{runner: runner}
-}
-
-func (s *NPMScanner) Name() string { return "npm" }
-
-func (s *NPMScanner) Scan() ([]model.Tool, error) {
-	out, runErr := s.runner("npm", "ls", "-g", "--depth=0", "--json")
-	if len(out) == 0 {
-		if runErr != nil {
-			return nil, fmt.Errorf("npm: %w", runErr)
-		}
-		return nil, nil
-	}
-
-	var parsed struct {
-		Dependencies map[string]struct {
-			Version string `json:"version"`
-		} `json:"dependencies"`
-	}
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		return nil, fmt.Errorf("npm: parsing output: %w", err)
-	}
-
-	tools := make([]model.Tool, 0, len(parsed.Dependencies))
-	for name, dep := range parsed.Dependencies {
-		tools = append(tools, model.Tool{Name: name, Source: "npm", Version: dep.Version})
-	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, nil
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `go test ./scanner/... -run TestNPMScanner -v`
-Expected: both tests PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add scanner/npm.go scanner/npm_test.go
-git commit -m "Add npm global scanner"
 ```
 
 ---
@@ -615,315 +506,6 @@ Expected: both tests PASS.
 ```bash
 git add scanner/npx.go scanner/npx_test.go
 git commit -m "Add npx history scanner using .bin symlink resolution"
-```
-
----
-
-### Task 5: Homebrew formula + cask scanners
-
-**Files:**
-- Create: `scanner/homebrew.go`
-- Test: `scanner/homebrew_test.go`
-
-**Interfaces:**
-- Consumes: `model.Tool`, `scanner.CommandRunner` (Task 2).
-- Produces: `scanner.NewHomebrewFormulaScanner(runner CommandRunner) *HomebrewFormulaScanner` (`Name() == "brew-formula"`), `scanner.NewHomebrewCaskScanner(runner CommandRunner) *HomebrewCaskScanner` (`Name() == "brew-cask"`).
-
-- [ ] **Step 1: Write the failing test**
-
-```go
-// scanner/homebrew_test.go
-package scanner
-
-import (
-	"errors"
-	"testing"
-)
-
-func TestHomebrewFormulaScannerParsesOnePerLine(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
-		if name != "brew" {
-			t.Fatalf("expected command 'brew', got %q", name)
-		}
-		if len(args) < 2 || args[0] != "list" || args[1] != "--formula" {
-			t.Fatalf("expected 'brew list --formula ...', got %v", args)
-		}
-		return []byte("gh\nmole\nwget\n"), nil
-	}
-
-	s := NewHomebrewFormulaScanner(runner)
-	if s.Name() != "brew-formula" {
-		t.Errorf("expected Name() == \"brew-formula\", got %q", s.Name())
-	}
-
-	tools, err := s.Scan()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(tools) != 3 {
-		t.Fatalf("expected 3 tools, got %d: %+v", len(tools), tools)
-	}
-	if tools[0].Name != "gh" || tools[0].Source != "brew-formula" {
-		t.Errorf("unexpected first tool: %+v", tools[0])
-	}
-}
-
-func TestHomebrewCaskScannerParsesOnePerLine(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
-		if len(args) < 2 || args[1] != "--cask" {
-			t.Fatalf("expected 'brew list --cask ...', got %v", args)
-		}
-		return []byte("ollama\nlm-studio\n"), nil
-	}
-
-	s := NewHomebrewCaskScanner(runner)
-	if s.Name() != "brew-cask" {
-		t.Errorf("expected Name() == \"brew-cask\", got %q", s.Name())
-	}
-	tools, err := s.Scan()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(tools) != 2 || tools[0].Source != "brew-cask" {
-		t.Errorf("unexpected tools: %+v", tools)
-	}
-}
-
-func TestHomebrewScannerNotInstalled(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
-		return nil, errors.New("exec: \"brew\": executable file not found in $PATH")
-	}
-	s := NewHomebrewFormulaScanner(runner)
-	tools, err := s.Scan()
-	if err == nil {
-		t.Fatal("expected an error when brew is not found")
-	}
-	if len(tools) != 0 {
-		t.Errorf("expected no tools on error, got %+v", tools)
-	}
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `go test ./scanner/... -run TestHomebrew`
-Expected: FAIL — `NewHomebrewFormulaScanner` undefined.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```go
-// scanner/homebrew.go
-package scanner
-
-import (
-	"fmt"
-	"strings"
-
-	"github.com/pranvgarg/toolsniff/model"
-)
-
-func runBrewList(runner CommandRunner, source, flag string) ([]model.Tool, error) {
-	out, runErr := runner("brew", "list", flag, "-1")
-	if len(out) == 0 {
-		if runErr != nil {
-			return nil, fmt.Errorf("brew: %w", runErr)
-		}
-		return nil, nil
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	tools := make([]model.Tool, 0, len(lines))
-	for _, line := range lines {
-		name := strings.TrimSpace(line)
-		if name == "" {
-			continue
-		}
-		tools = append(tools, model.Tool{Name: name, Source: source})
-	}
-	return tools, nil
-}
-
-// HomebrewFormulaScanner discovers installed Homebrew formulae.
-type HomebrewFormulaScanner struct {
-	runner CommandRunner
-}
-
-func NewHomebrewFormulaScanner(runner CommandRunner) *HomebrewFormulaScanner {
-	return &HomebrewFormulaScanner{runner: runner}
-}
-
-func (s *HomebrewFormulaScanner) Name() string { return "brew-formula" }
-
-func (s *HomebrewFormulaScanner) Scan() ([]model.Tool, error) {
-	return runBrewList(s.runner, "brew-formula", "--formula")
-}
-
-// HomebrewCaskScanner discovers installed Homebrew casks (GUI apps).
-type HomebrewCaskScanner struct {
-	runner CommandRunner
-}
-
-func NewHomebrewCaskScanner(runner CommandRunner) *HomebrewCaskScanner {
-	return &HomebrewCaskScanner{runner: runner}
-}
-
-func (s *HomebrewCaskScanner) Name() string { return "brew-cask" }
-
-func (s *HomebrewCaskScanner) Scan() ([]model.Tool, error) {
-	return runBrewList(s.runner, "brew-cask", "--cask")
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `go test ./scanner/... -run TestHomebrew -v`
-Expected: all three tests PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add scanner/homebrew.go scanner/homebrew_test.go
-git commit -m "Add Homebrew formula and cask scanners"
-```
-
----
-
-### Task 6: pipx scanner
-
-**Files:**
-- Create: `scanner/pipx.go`
-- Test: `scanner/pipx_test.go`
-
-**Interfaces:**
-- Consumes: `model.Tool`, `scanner.CommandRunner` (Task 2).
-- Produces: `scanner.NewPipxScanner(runner CommandRunner) *PipxScanner`, `Name() == "pipx"`.
-
-- [ ] **Step 1: Write the failing test**
-
-```go
-// scanner/pipx_test.go
-package scanner
-
-import "testing"
-
-func TestPipxScannerParsesVenvs(t *testing.T) {
-	fixture := []byte(`{
-  "venvs": {
-    "black": {
-      "metadata": { "main_package": { "package_version": "24.1.0" } }
-    }
-  }
-}`)
-	runner := func(name string, args ...string) ([]byte, error) {
-		if name != "pipx" {
-			t.Fatalf("expected command 'pipx', got %q", name)
-		}
-		return fixture, nil
-	}
-
-	s := NewPipxScanner(runner)
-	if s.Name() != "pipx" {
-		t.Errorf("expected Name() == \"pipx\", got %q", s.Name())
-	}
-	tools, err := s.Scan()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(tools) != 1 || tools[0].Name != "black" || tools[0].Version != "24.1.0" || tools[0].Source != "pipx" {
-		t.Errorf("unexpected tools: %+v", tools)
-	}
-}
-
-func TestPipxScannerEmptyVenvs(t *testing.T) {
-	runner := func(name string, args ...string) ([]byte, error) {
-		return []byte(`{"venvs": {}}`), nil
-	}
-	s := NewPipxScanner(runner)
-	tools, err := s.Scan()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(tools) != 0 {
-		t.Errorf("expected no tools, got %+v", tools)
-	}
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `go test ./scanner/... -run TestPipx`
-Expected: FAIL — `NewPipxScanner` undefined.
-
-- [ ] **Step 3: Write minimal implementation**
-
-```go
-// scanner/pipx.go
-package scanner
-
-import (
-	"encoding/json"
-	"fmt"
-	"sort"
-
-	"github.com/pranvgarg/toolsniff/model"
-)
-
-// PipxScanner discovers tools installed via pipx.
-type PipxScanner struct {
-	runner CommandRunner
-}
-
-func NewPipxScanner(runner CommandRunner) *PipxScanner {
-	return &PipxScanner{runner: runner}
-}
-
-func (s *PipxScanner) Name() string { return "pipx" }
-
-func (s *PipxScanner) Scan() ([]model.Tool, error) {
-	out, runErr := s.runner("pipx", "list", "--json")
-	if len(out) == 0 {
-		if runErr != nil {
-			return nil, fmt.Errorf("pipx: %w", runErr)
-		}
-		return nil, nil
-	}
-
-	var parsed struct {
-		Venvs map[string]struct {
-			Metadata struct {
-				MainPackage struct {
-					PackageVersion string `json:"package_version"`
-				} `json:"main_package"`
-			} `json:"metadata"`
-		} `json:"venvs"`
-	}
-	if err := json.Unmarshal(out, &parsed); err != nil {
-		return nil, fmt.Errorf("pipx: parsing output: %w", err)
-	}
-
-	tools := make([]model.Tool, 0, len(parsed.Venvs))
-	for name, venv := range parsed.Venvs {
-		tools = append(tools, model.Tool{
-			Name:    name,
-			Source:  "pipx",
-			Version: venv.Metadata.MainPackage.PackageVersion,
-		})
-	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, nil
-}
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `go test ./scanner/... -run TestPipx -v`
-Expected: both tests PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add scanner/pipx.go scanner/pipx_test.go
-git commit -m "Add pipx scanner"
 ```
 
 ---
@@ -1656,6 +1238,466 @@ git commit -m "Add registry diff keyed on (Source, Name)"
 
 ---
 
+## Wave 3: Command-Based Scanners and Renderers
+
+**Depends on:** Wave 2
+
+**Gate:** `go build ./...` succeeds and the following all pass:
+`go test ./scanner/... -run 'TestNPMScanner|TestHomebrew|TestPipx'`
+`go test ./output/...`
+Plus the Task 14 manual TUI smoke test (tabs render, filter works, save/quit work) actually run and confirmed, not assumed. Load-bearing: `main.go` in Wave 4 wires every scanner constructor and every renderer produced here directly.
+
+### Task 3: npm global scanner
+
+**Files:**
+- Create: `scanner/npm.go`
+- Test: `scanner/npm_test.go`
+
+**Interfaces:**
+- Consumes: `model.Tool`, `scanner.CommandRunner` (Task 2).
+- Produces: `scanner.NewNPMScanner(runner CommandRunner) *NPMScanner`, implementing `Scanner` with `Name() == "npm"`.
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// scanner/npm_test.go
+package scanner
+
+import (
+	"errors"
+	"testing"
+)
+
+func TestNPMScannerParsesGlobalPackages(t *testing.T) {
+	fixture := []byte(`{
+  "name": "lib",
+  "dependencies": {
+    "npm": { "version": "10.9.2" },
+    "opencode-ai": { "version": "1.18.4" }
+  }
+}`)
+	runner := func(name string, args ...string) ([]byte, error) {
+		if name != "npm" {
+			t.Fatalf("expected command 'npm', got %q", name)
+		}
+		return fixture, nil
+	}
+
+	s := NewNPMScanner(runner)
+	if s.Name() != "npm" {
+		t.Errorf("expected Name() == \"npm\", got %q", s.Name())
+	}
+
+	tools, err := s.Scan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d: %+v", len(tools), tools)
+	}
+	if tools[0].Name != "npm" || tools[0].Version != "10.9.2" || tools[0].Source != "npm" {
+		t.Errorf("unexpected first tool: %+v", tools[0])
+	}
+	if tools[1].Name != "opencode-ai" || tools[1].Version != "1.18.4" {
+		t.Errorf("unexpected second tool: %+v", tools[1])
+	}
+}
+
+func TestNPMScannerNotInstalled(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		return nil, errors.New("exec: \"npm\": executable file not found in $PATH")
+	}
+	s := NewNPMScanner(runner)
+	tools, err := s.Scan()
+	if err == nil {
+		t.Fatal("expected an error when npm is not found")
+	}
+	if len(tools) != 0 {
+		t.Errorf("expected no tools on error, got %+v", tools)
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./scanner/... -run TestNPMScanner`
+Expected: FAIL — `NewNPMScanner` undefined.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```go
+// scanner/npm.go
+package scanner
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+
+	"github.com/pranvgarg/toolsniff/model"
+)
+
+// NPMScanner discovers globally installed npm packages via `npm ls -g`.
+type NPMScanner struct {
+	runner CommandRunner
+}
+
+func NewNPMScanner(runner CommandRunner) *NPMScanner {
+	return &NPMScanner{runner: runner}
+}
+
+func (s *NPMScanner) Name() string { return "npm" }
+
+func (s *NPMScanner) Scan() ([]model.Tool, error) {
+	out, runErr := s.runner("npm", "ls", "-g", "--depth=0", "--json")
+	if len(out) == 0 {
+		if runErr != nil {
+			return nil, fmt.Errorf("npm: %w", runErr)
+		}
+		return nil, nil
+	}
+
+	var parsed struct {
+		Dependencies map[string]struct {
+			Version string `json:"version"`
+		} `json:"dependencies"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, fmt.Errorf("npm: parsing output: %w", err)
+	}
+
+	tools := make([]model.Tool, 0, len(parsed.Dependencies))
+	for name, dep := range parsed.Dependencies {
+		tools = append(tools, model.Tool{Name: name, Source: "npm", Version: dep.Version})
+	}
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	return tools, nil
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `go test ./scanner/... -run TestNPMScanner -v`
+Expected: both tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scanner/npm.go scanner/npm_test.go
+git commit -m "Add npm global scanner"
+```
+
+---
+
+### Task 5: Homebrew formula + cask scanners
+
+**Files:**
+- Create: `scanner/homebrew.go`
+- Test: `scanner/homebrew_test.go`
+
+**Interfaces:**
+- Consumes: `model.Tool`, `scanner.CommandRunner` (Task 2).
+- Produces: `scanner.NewHomebrewFormulaScanner(runner CommandRunner) *HomebrewFormulaScanner` (`Name() == "brew-formula"`), `scanner.NewHomebrewCaskScanner(runner CommandRunner) *HomebrewCaskScanner` (`Name() == "brew-cask"`).
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// scanner/homebrew_test.go
+package scanner
+
+import (
+	"errors"
+	"testing"
+)
+
+func TestHomebrewFormulaScannerParsesOnePerLine(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		if name != "brew" {
+			t.Fatalf("expected command 'brew', got %q", name)
+		}
+		if len(args) < 2 || args[0] != "list" || args[1] != "--formula" {
+			t.Fatalf("expected 'brew list --formula ...', got %v", args)
+		}
+		return []byte("gh\nmole\nwget\n"), nil
+	}
+
+	s := NewHomebrewFormulaScanner(runner)
+	if s.Name() != "brew-formula" {
+		t.Errorf("expected Name() == \"brew-formula\", got %q", s.Name())
+	}
+
+	tools, err := s.Scan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 3 {
+		t.Fatalf("expected 3 tools, got %d: %+v", len(tools), tools)
+	}
+	if tools[0].Name != "gh" || tools[0].Source != "brew-formula" {
+		t.Errorf("unexpected first tool: %+v", tools[0])
+	}
+}
+
+func TestHomebrewCaskScannerParsesOnePerLine(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		if len(args) < 2 || args[1] != "--cask" {
+			t.Fatalf("expected 'brew list --cask ...', got %v", args)
+		}
+		return []byte("ollama\nlm-studio\n"), nil
+	}
+
+	s := NewHomebrewCaskScanner(runner)
+	if s.Name() != "brew-cask" {
+		t.Errorf("expected Name() == \"brew-cask\", got %q", s.Name())
+	}
+	tools, err := s.Scan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 2 || tools[0].Source != "brew-cask" {
+		t.Errorf("unexpected tools: %+v", tools)
+	}
+}
+
+func TestHomebrewScannerNotInstalled(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		return nil, errors.New("exec: \"brew\": executable file not found in $PATH")
+	}
+	s := NewHomebrewFormulaScanner(runner)
+	tools, err := s.Scan()
+	if err == nil {
+		t.Fatal("expected an error when brew is not found")
+	}
+	if len(tools) != 0 {
+		t.Errorf("expected no tools on error, got %+v", tools)
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./scanner/... -run TestHomebrew`
+Expected: FAIL — `NewHomebrewFormulaScanner` undefined.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```go
+// scanner/homebrew.go
+package scanner
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/pranvgarg/toolsniff/model"
+)
+
+func runBrewList(runner CommandRunner, source, flag string) ([]model.Tool, error) {
+	out, runErr := runner("brew", "list", flag, "-1")
+	if len(out) == 0 {
+		if runErr != nil {
+			return nil, fmt.Errorf("brew: %w", runErr)
+		}
+		return nil, nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	tools := make([]model.Tool, 0, len(lines))
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		tools = append(tools, model.Tool{Name: name, Source: source})
+	}
+	return tools, nil
+}
+
+// HomebrewFormulaScanner discovers installed Homebrew formulae.
+type HomebrewFormulaScanner struct {
+	runner CommandRunner
+}
+
+func NewHomebrewFormulaScanner(runner CommandRunner) *HomebrewFormulaScanner {
+	return &HomebrewFormulaScanner{runner: runner}
+}
+
+func (s *HomebrewFormulaScanner) Name() string { return "brew-formula" }
+
+func (s *HomebrewFormulaScanner) Scan() ([]model.Tool, error) {
+	return runBrewList(s.runner, "brew-formula", "--formula")
+}
+
+// HomebrewCaskScanner discovers installed Homebrew casks (GUI apps).
+type HomebrewCaskScanner struct {
+	runner CommandRunner
+}
+
+func NewHomebrewCaskScanner(runner CommandRunner) *HomebrewCaskScanner {
+	return &HomebrewCaskScanner{runner: runner}
+}
+
+func (s *HomebrewCaskScanner) Name() string { return "brew-cask" }
+
+func (s *HomebrewCaskScanner) Scan() ([]model.Tool, error) {
+	return runBrewList(s.runner, "brew-cask", "--cask")
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `go test ./scanner/... -run TestHomebrew -v`
+Expected: all three tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scanner/homebrew.go scanner/homebrew_test.go
+git commit -m "Add Homebrew formula and cask scanners"
+```
+
+---
+
+### Task 6: pipx scanner
+
+**Files:**
+- Create: `scanner/pipx.go`
+- Test: `scanner/pipx_test.go`
+
+**Interfaces:**
+- Consumes: `model.Tool`, `scanner.CommandRunner` (Task 2).
+- Produces: `scanner.NewPipxScanner(runner CommandRunner) *PipxScanner`, `Name() == "pipx"`.
+
+- [ ] **Step 1: Write the failing test**
+
+```go
+// scanner/pipx_test.go
+package scanner
+
+import "testing"
+
+func TestPipxScannerParsesVenvs(t *testing.T) {
+	fixture := []byte(`{
+  "venvs": {
+    "black": {
+      "metadata": { "main_package": { "package_version": "24.1.0" } }
+    }
+  }
+}`)
+	runner := func(name string, args ...string) ([]byte, error) {
+		if name != "pipx" {
+			t.Fatalf("expected command 'pipx', got %q", name)
+		}
+		return fixture, nil
+	}
+
+	s := NewPipxScanner(runner)
+	if s.Name() != "pipx" {
+		t.Errorf("expected Name() == \"pipx\", got %q", s.Name())
+	}
+	tools, err := s.Scan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "black" || tools[0].Version != "24.1.0" || tools[0].Source != "pipx" {
+		t.Errorf("unexpected tools: %+v", tools)
+	}
+}
+
+func TestPipxScannerEmptyVenvs(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		return []byte(`{"venvs": {}}`), nil
+	}
+	s := NewPipxScanner(runner)
+	tools, err := s.Scan()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 0 {
+		t.Errorf("expected no tools, got %+v", tools)
+	}
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `go test ./scanner/... -run TestPipx`
+Expected: FAIL — `NewPipxScanner` undefined.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```go
+// scanner/pipx.go
+package scanner
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+
+	"github.com/pranvgarg/toolsniff/model"
+)
+
+// PipxScanner discovers tools installed via pipx.
+type PipxScanner struct {
+	runner CommandRunner
+}
+
+func NewPipxScanner(runner CommandRunner) *PipxScanner {
+	return &PipxScanner{runner: runner}
+}
+
+func (s *PipxScanner) Name() string { return "pipx" }
+
+func (s *PipxScanner) Scan() ([]model.Tool, error) {
+	out, runErr := s.runner("pipx", "list", "--json")
+	if len(out) == 0 {
+		if runErr != nil {
+			return nil, fmt.Errorf("pipx: %w", runErr)
+		}
+		return nil, nil
+	}
+
+	var parsed struct {
+		Venvs map[string]struct {
+			Metadata struct {
+				MainPackage struct {
+					PackageVersion string `json:"package_version"`
+				} `json:"main_package"`
+			} `json:"metadata"`
+		} `json:"venvs"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, fmt.Errorf("pipx: parsing output: %w", err)
+	}
+
+	tools := make([]model.Tool, 0, len(parsed.Venvs))
+	for name, venv := range parsed.Venvs {
+		tools = append(tools, model.Tool{
+			Name:    name,
+			Source:  "pipx",
+			Version: venv.Metadata.MainPackage.PackageVersion,
+		})
+	}
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	return tools, nil
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `go test ./scanner/... -run TestPipx -v`
+Expected: both tests PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scanner/pipx.go scanner/pipx_test.go
+git commit -m "Add pipx scanner"
+```
+
+---
+
 ### Task 12: Table output (`--list`)
 
 **Files:**
@@ -2199,6 +2241,12 @@ git commit -m "Add Bubbletea TUI with tab navigation, filtering, and save"
 
 ---
 
+## Wave 4: Assembly
+
+**Depends on:** Wave 3
+
+**Gate:** `go build -o toolsniff .` succeeds, `go test ./...` is green across every package, and all six manual end-to-end checks in Task 15 Step 4 are run against this real machine and confirmed (--list, --json, --diff before/after --save, and the bare TUI). This is the actual deliverable — verify it for real, not by reading the task's own completion report.
+
 ### Task 15: `main.go` wiring + end-to-end verification
 
 **Files:**
@@ -2330,6 +2378,12 @@ git commit -m "Wire scanners, registry, and output renderers together in main"
 ```
 
 ---
+
+## Wave 5: Documentation
+
+**Depends on:** Wave 4
+
+**Gate:** Leaf wave, nothing downstream depends on it — light gate: README committed, and the PATH-check step actually run once so the instructions match this machine's real state.
 
 ### Task 16: README and PATH setup
 
