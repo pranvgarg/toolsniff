@@ -1,0 +1,45 @@
+package registry
+
+import (
+	"sort"
+
+	"github.com/pranvgarg/toolsniff/model"
+)
+
+// Diff describes what changed between a saved baseline and a fresh scan.
+type Diff struct {
+	Added   []model.Tool
+	Removed []model.Tool
+}
+
+func toolKey(t model.Tool) string { return t.Source + "\x00" + t.Name }
+
+// ComputeDiff compares an old baseline against a new scan, keyed on
+// (Source, Name) so the same tool name from two different sources is never
+// confused with itself.
+func ComputeDiff(old, new []model.Tool) Diff {
+	oldSet := make(map[string]model.Tool, len(old))
+	for _, t := range old {
+		oldSet[toolKey(t)] = t
+	}
+	newSet := make(map[string]model.Tool, len(new))
+	for _, t := range new {
+		newSet[toolKey(t)] = t
+	}
+
+	var added, removed []model.Tool
+	for key, t := range newSet {
+		if _, ok := oldSet[key]; !ok {
+			added = append(added, t)
+		}
+	}
+	for key, t := range oldSet {
+		if _, ok := newSet[key]; !ok {
+			removed = append(removed, t)
+		}
+	}
+
+	sort.Slice(added, func(i, j int) bool { return added[i].Name < added[j].Name })
+	sort.Slice(removed, func(i, j int) bool { return removed[i].Name < removed[j].Name })
+	return Diff{Added: added, Removed: removed}
+}
