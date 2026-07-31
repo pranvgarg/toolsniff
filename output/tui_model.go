@@ -92,7 +92,16 @@ func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = wsMsg.Width, wsMsg.Height
-		m.list.SetSize(wsMsg.Width, wsMsg.Height-4)
+		if m.width > 0 && m.width < compactWidthThreshold {
+			h := m.height - 2 // compact strip + footer
+			if h < 1 {
+				h = 1
+			}
+			m.list.SetSize(m.width, h)
+		} else {
+			sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
+			m.list.SetSize(contentPaneWidth(m.width, sbWidth), contentPaneHeight(m.height))
+		}
 		return m, nil
 	}
 
@@ -146,36 +155,26 @@ func (m tuiModel) View() tea.View {
 		return view
 	}
 
-	tabBar := renderTabBar(m.tabs, m.activeTab, m.toolsBySrc)
-	footer := footerStyle.Render("↑↓ move · tab switch · / filter · d diff · s save · q quit")
-	status := ""
-	if m.statusMsg != "" {
-		status = statusStyle.Render(m.statusMsg)
+	var body string
+	if m.width > 0 && m.width < compactWidthThreshold {
+		body = m.renderCompact() + "\n" + m.list.View()
+	} else {
+		body = m.renderFrame()
 	}
-	parts := []string{tabBar, m.list.View()}
+
+	parts := []string{body}
 	for _, w := range m.warnings {
 		parts = append(parts, footerStyle.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
 	}
-	if status != "" {
-		parts = append(parts, status)
+	if m.statusMsg != "" {
+		parts = append(parts, statusStyle.Render(m.statusMsg))
 	}
-	parts = append(parts, footer)
+	if m.width > 0 && m.width < compactWidthThreshold {
+		parts = append(parts, footerStyle.Render("↑↓ move · tab switch · / filter · d diff · s save · q quit"))
+	}
 	view := tea.NewView(strings.Join(parts, "\n"))
 	view.AltScreen = true
 	return view
-}
-
-func renderTabBar(tabs []string, active int, toolsBySrc map[string][]model.Tool) string {
-	parts := make([]string, len(tabs))
-	for i, t := range tabs {
-		label := fmt.Sprintf("%s (%d)", t, len(toolsBySrc[t]))
-		if i == active {
-			parts[i] = activeTabStyle.Render(label)
-		} else {
-			parts[i] = tabStyle.Render(label)
-		}
-	}
-	return strings.Join(parts, "  ")
 }
 
 // RunTUI launches the interactive Bubbletea program.
