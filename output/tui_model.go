@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/timer"
 	tea "charm.land/bubbletea/v2"
 	"github.com/pranvgarg/toolsniff/model"
@@ -20,15 +20,22 @@ var tabOrder = []string{
 	"applications", "path", "npx-history",
 }
 
+// contentVersionColWidth is the fixed display width of the content table's
+// right-aligned Version column. It does not vary with terminal width; only
+// the Name column grows/shrinks to fill the available space.
+const contentVersionColWidth = 10
+
 type tuiModel struct {
-	tabs       []string
-	toolsBySrc map[string][]model.Tool
-	activeTab  int
-	list       list.Model
-	realTools  []model.Tool
-	regPath    string
-	statusMsg  string
-	warnings   []scanner.Warning
+	tabs        []string
+	toolsBySrc  map[string][]model.Tool
+	activeTab   int
+	content     table.Model
+	filtering   bool
+	filterQuery string
+	realTools   []model.Tool
+	regPath     string
+	statusMsg   string
+	warnings    []scanner.Warning
 
 	width, height int
 
@@ -65,13 +72,17 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 		tabs = []string{"npm"}
 	}
 
-	l := list.New(itemsFor(toolsBySrc[tabs[0]]), list.NewDefaultDelegate(), 0, 0)
-	l.Title = tabs[0]
+	t := table.New(
+		table.WithColumns(columnsFor(0)),
+		table.WithRows(rowsFor(toolsBySrc[tabs[0]], "")),
+		table.WithFocused(true),
+	)
+	t.SetStyles(contentTableStyles())
 
 	return tuiModel{
 		tabs:        tabs,
 		toolsBySrc:  toolsBySrc,
-		list:        l,
+		content:     t,
 		realTools:   realTools,
 		regPath:     regPath,
 		warnings:    warnings,
@@ -79,12 +90,50 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 	}
 }
 
-func itemsFor(tools []model.Tool) []list.Item {
-	items := make([]list.Item, len(tools))
-	for i, t := range tools {
-		items[i] = toolItem{tool: t}
+// versionOrPath returns a tool's version, falling back to its path when no
+// version was detected. This mirrors the old toolItem.Description() logic.
+func versionOrPath(t model.Tool) string {
+	if t.Version != "" {
+		return t.Version
 	}
-	return items
+	return t.Path
+}
+
+// columnsFor returns the content table's columns sized for the given pane
+// width: a fixed-width Version column and a Name column that fills the
+// remaining space.
+func columnsFor(width int) []table.Column {
+	nameWidth := width - contentVersionColWidth - 4
+	if nameWidth < 4 {
+		nameWidth = 4
+	}
+	return []table.Column{
+		{Title: "Name", Width: nameWidth},
+		{Title: "Version", Width: contentVersionColWidth},
+	}
+}
+
+// rowsFor builds the content table's rows for tools, keeping only those
+// whose name case-insensitively contains filter (all tools when filter is
+// empty). The version cell is pre-padded to contentVersionColWidth so it
+// renders right-aligned, since bubbles/table has no built-in alignment.
+func rowsFor(tools []model.Tool, filter string) []table.Row {
+	lowerFilter := strings.ToLower(filter)
+	rows := make([]table.Row, 0, len(tools))
+	for _, t := range tools {
+		if filter != "" && !strings.Contains(strings.ToLower(t.Name), lowerFilter) {
+			continue
+		}
+		rows = append(rows, table.Row{t.Name, rightAlign(versionOrPath(t), contentVersionColWidth)})
+	}
+	return rows
+}
+
+// rebuildContent recomputes the content table's rows for the active tab
+// under the current filter query, resetting the cursor to the top.
+func (m *tuiModel) rebuildContent() {
+	m.content.SetRows(rowsFor(m.toolsBySrc[m.tabs[m.activeTab]], m.filterQuery))
+	m.content.SetCursor(0)
 }
 
 func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
@@ -97,10 +146,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if h < 1 {
 				h = 1
 			}
-			m.list.SetSize(m.width, h)
+			m.content.SetColumns(columnsFor(m.width))
+			m.content.SetWidth(m.width)
+			m.content.SetHeight(h)
 		} else {
 			sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
-			m.list.SetSize(contentPaneWidth(m.width, sbWidth), contentPaneHeight(m.height))
+			cWidth := contentPaneWidth(m.width, sbWidth)
+			m.content.SetColumns(columnsFor(cWidth))
+			m.content.SetWidth(cWidth)
+			m.content.SetHeight(contentPaneHeight(m.height))
 		}
 		return m, nil
 	}
@@ -109,20 +163,42 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateSplash(msg)
 	}
 
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		if m.list.FilterState() == list.Filtering {
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-			return m, cmd
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if m.filtering {
+			switch keyMsg.String() {
+			case "esc":
+				m.filtering = false
+				m.filterQuery = ""
+				m.rebuildContent()
+				return m, nil
+			case "enter":
+				m.filtering = false
+				return m, nil
+			case "backspace":
+				if m.filterQuery != "" {
+					r := []rune(m.filterQuery)
+					m.filterQuery = string(r[:len(r)-1])
+					m.rebuildContent()
+				}
+				return m, nil
+			default:
+				if text := keyMsg.Key().Text; text != "" {
+					m.filterQuery += text
+					m.rebuildContent()
+				}
+				return m, nil
+			}
 		}
-		switch msg.String() {
+
+		switch keyMsg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "/":
+			m.filtering = true
+			return m, nil
 		case "tab":
 			m.activeTab = (m.activeTab + 1) % len(m.tabs)
-			m.list.SetItems(itemsFor(m.toolsBySrc[m.tabs[m.activeTab]]))
-			m.list.Title = m.tabs[m.activeTab]
+			m.rebuildContent()
 			return m, nil
 		case "s":
 			if err := registry.Save(m.regPath, m.realTools); err != nil {
@@ -135,8 +211,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i, t := range m.tabs {
 				if t == "new" {
 					m.activeTab = i
-					m.list.SetItems(itemsFor(m.toolsBySrc["new"]))
-					m.list.Title = "new"
+					m.rebuildContent()
 					break
 				}
 			}
@@ -144,8 +219,26 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
+	m.content, cmd = m.content.Update(msg)
 	return m, cmd
+}
+
+// footerHint returns the footer/status line shown at the bottom of both the
+// bordered frame and the compact layout: the live filter query and match
+// count while filtering (or once a filter is applied), otherwise the
+// default keybinding hint. Keeping this in the footer (rather than an
+// appended line) ensures it stays within the frame's fixed height budget
+// instead of scrolling off-screen.
+func (m tuiModel) footerHint() string {
+	if m.filtering || m.filterQuery != "" {
+		n := len(m.content.Rows())
+		unit := "match"
+		if n != 1 {
+			unit = "matches"
+		}
+		return fmt.Sprintf("/%s — %d %s (esc clear · enter apply)", m.filterQuery, n, unit)
+	}
+	return "↑↓ move · tab switch · / filter · d diff · s save · q quit"
 }
 
 func (m tuiModel) View() tea.View {
@@ -157,7 +250,7 @@ func (m tuiModel) View() tea.View {
 
 	var body string
 	if m.width > 0 && m.width < compactWidthThreshold {
-		body = m.renderCompact() + "\n" + m.list.View()
+		body = m.renderCompact() + "\n" + m.content.View()
 	} else {
 		body = m.renderFrame()
 	}
@@ -170,7 +263,7 @@ func (m tuiModel) View() tea.View {
 		parts = append(parts, statusStyle.Render(m.statusMsg))
 	}
 	if m.width > 0 && m.width < compactWidthThreshold {
-		parts = append(parts, footerStyle.Render("↑↓ move · tab switch · / filter · d diff · s save · q quit"))
+		parts = append(parts, footerStyle.Render(m.footerHint()))
 	}
 	view := tea.NewView(strings.Join(parts, "\n"))
 	view.AltScreen = true

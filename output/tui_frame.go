@@ -82,6 +82,18 @@ func fitWidth(s string, width int) string {
 	return lipgloss.NewStyle().Width(width).MaxWidth(width).Render(s)
 }
 
+// rightAlign left-pads s with spaces so it occupies exactly width display
+// cells (used for the content table's version column, which bubbles/table
+// has no built-in alignment option for). If s is already at or beyond
+// width, it is returned unchanged and left to the table's own truncation.
+func rightAlign(s string, width int) string {
+	w := lipgloss.Width(s)
+	if w >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-w) + s
+}
+
 // renderHeaderLine builds the top border line, with the wordmark, tagline,
 // and stats stamp embedded directly into the border, e.g.:
 //
@@ -168,7 +180,7 @@ func (m tuiModel) renderFrame() string {
 	rowCount := contentPaneHeight(height)
 
 	sidebarLines := renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount)
-	contentLines := strings.Split(m.list.View(), "\n")
+	contentLines := strings.Split(m.content.View(), "\n")
 
 	rows := make([]string, rowCount)
 	for i := 0; i < rowCount; i++ {
@@ -182,8 +194,7 @@ func (m tuiModel) renderFrame() string {
 	sep := "├" + strings.Repeat("─", sbWidth+2) + "┴" + strings.Repeat("─", cWidth+2) + "┤"
 	sep = headerBorderStyle.Render(sep)
 
-	footerText := "↑↓ move · tab switch · / filter · d diff · s save · q quit"
-	footerLine := "│ " + fitWidth(footerText, width-4) + " │"
+	footerLine := "│ " + fitWidth(m.footerHint(), width-4) + " │"
 
 	bottom := headerBorderStyle.Render("└" + strings.Repeat("─", width-2) + "┘")
 

@@ -1,6 +1,9 @@
 package output
 
-import "charm.land/lipgloss/v2"
+import (
+	"charm.land/bubbles/v2/table"
+	"charm.land/lipgloss/v2"
+)
 
 var (
 	colorAmber = lipgloss.Color("#ffb454")
@@ -18,3 +21,13 @@ var (
 	headerTaglineStyle = lipgloss.NewStyle().Foreground(colorMuted)
 	headerStatsStyle   = lipgloss.NewStyle().Foreground(colorMuted)
 )
+
+// contentTableStyles returns the bubbles/table styling used by the content
+// pane: a muted header and a cyan-highlighted, bold selected row.
+func contentTableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Header = lipgloss.NewStyle().Foreground(colorMuted).Bold(true).Padding(0, 1)
+	s.Cell = lipgloss.NewStyle().Padding(0, 1)
+	s.Selected = lipgloss.NewStyle().Foreground(colorCyan).Bold(true)
+	return s
+}
