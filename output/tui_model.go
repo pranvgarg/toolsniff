@@ -225,27 +225,38 @@ func (m *tuiModel) rebuildContent() {
 	m.content.SetCursor(0)
 }
 
+// resizeContent recalculates the content table's columns, width, and
+// height for the current terminal size and footer state. The footer's row
+// count varies (1 normally, more when the full key-binding help is
+// expanded via "?"), so this must be called both on every WindowSizeMsg
+// and whenever something else could change the footer's line count.
+func (m *tuiModel) resizeContent() {
+	footerRows := footerRowCount(m.footerHint())
+	if m.width > 0 && m.width < compactWidthThreshold {
+		m.help.SetWidth(m.width)
+		h := m.height - 1 - footerRows // compact strip + footer
+		if h < 1 {
+			h = 1
+		}
+		m.content.SetColumns(columnsFor(m.width))
+		m.content.SetWidth(m.width)
+		m.content.SetHeight(h)
+		return
+	}
+	m.help.SetWidth(m.width - 4)
+	sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
+	cWidth := contentPaneWidth(m.width, sbWidth)
+	m.content.SetColumns(columnsFor(cWidth))
+	m.content.SetWidth(cWidth)
+	m.content.SetHeight(contentPaneHeight(m.height, footerRows))
+}
+
 func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width, m.height = wsMsg.Width, wsMsg.Height
-		m.help.SetWidth(m.width)
-		if m.width > 0 && m.width < compactWidthThreshold {
-			h := m.height - 2 // compact strip + footer
-			if h < 1 {
-				h = 1
-			}
-			m.content.SetColumns(columnsFor(m.width))
-			m.content.SetWidth(m.width)
-			m.content.SetHeight(h)
-		} else {
-			sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
-			cWidth := contentPaneWidth(m.width, sbWidth)
-			m.content.SetColumns(columnsFor(cWidth))
-			m.content.SetWidth(cWidth)
-			m.content.SetHeight(contentPaneHeight(m.height))
-		}
+		m.resizeContent()
 		return m, nil
 	}
 
@@ -326,6 +337,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(keyMsg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
+			m.resizeContent()
 			return m, nil
 		}
 	}

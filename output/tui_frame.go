@@ -12,10 +12,12 @@ import (
 // sidebar collapses into a single-line compact tab strip.
 const compactWidthThreshold = 60
 
-// frameNonContentRows is the number of rows the bordered frame spends on
-// chrome (top border, separator, footer, bottom border) around the
-// sidebar/content area.
-const frameNonContentRows = 4
+// frameChromeRows is the number of fixed rows the bordered frame spends on
+// chrome around the sidebar/content area, excluding the footer: top
+// border, separator, bottom border. The footer's own row count varies (1
+// normally, more when the full key-binding help is expanded via "?") and
+// is accounted for separately by callers of contentPaneHeight.
+const frameChromeRows = 3
 
 // frameFixedCols is the number of columns the bordered frame spends on
 // borders and padding around the sidebar and content columns:
@@ -65,13 +67,21 @@ func contentPaneWidth(width, sbWidth int) int {
 }
 
 // contentPaneHeight returns the number of content/sidebar rows available
-// given the total frame height.
-func contentPaneHeight(height int) int {
-	h := height - frameNonContentRows
+// given the total frame height and the number of rows the footer needs
+// (normally 1, more when the full key-binding help is expanded).
+func contentPaneHeight(height, footerRows int) int {
+	h := height - frameChromeRows - footerRows
 	if h < 1 {
 		h = 1
 	}
 	return h
+}
+
+// footerRowCount returns the number of lines footer will render as. The
+// footer is normally a single line, but help.Model.View can return a
+// multi-line block when the full key-binding help ("?") is expanded.
+func footerRowCount(footer string) int {
+	return strings.Count(footer, "\n") + 1
 }
 
 // fitWidth pads or truncates s (ANSI-aware) to exactly width display cells.
@@ -175,9 +185,12 @@ func (m tuiModel) renderFrame() string {
 
 	top := renderHeaderLine(width, "◆ toolsniff", "dev & AI CLI inventory", stats)
 
+	footerText := m.footerHint()
+	footerLines := strings.Split(footerText, "\n")
+
 	sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
 	cWidth := contentPaneWidth(width, sbWidth)
-	rowCount := contentPaneHeight(height)
+	rowCount := contentPaneHeight(height, len(footerLines))
 
 	sidebarLines := renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount)
 	contentLines := strings.Split(m.content.View(), "\n")
@@ -194,14 +207,23 @@ func (m tuiModel) renderFrame() string {
 	sep := "├" + strings.Repeat("─", sbWidth+2) + "┴" + strings.Repeat("─", cWidth+2) + "┤"
 	sep = headerBorderStyle.Render(sep)
 
-	footerLine := "│ " + fitWidth(m.footerHint(), width-4) + " │"
+	// Each line of the footer gets its own bordered row: a multi-line
+	// footer (the full key-binding help, toggled via "?") must not be
+	// wrapped in a single "│ ... │" pair, which would only border the
+	// first and last visual line and break the box drawing for the rest.
+	footerBlock := make([]string, len(footerLines))
+	for i, line := range footerLines {
+		footerBlock[i] = "│ " + fitWidth(line, width-4) + " │"
+	}
 
 	bottom := headerBorderStyle.Render("└" + strings.Repeat("─", width-2) + "┘")
 
-	lines := make([]string, 0, rowCount+4)
+	lines := make([]string, 0, rowCount+3+len(footerBlock))
 	lines = append(lines, top)
 	lines = append(lines, rows...)
-	lines = append(lines, sep, footerLine, bottom)
+	lines = append(lines, sep)
+	lines = append(lines, footerBlock...)
+	lines = append(lines, bottom)
 	return strings.Join(lines, "\n")
 }
 
