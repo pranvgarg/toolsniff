@@ -15,6 +15,14 @@ bin_dir = "~/.cargo/bin"
 [bun]
 enabled = true
 
+[theme]
+preset = "midnight"
+
+[theme.colors]
+# Override only the tokens you want to change.
+# selection_background = "#7fd8c4"
+# selection_foreground = "#081018"
+
 [registry]
 path = "~/.toolsniff/registry.json"
 

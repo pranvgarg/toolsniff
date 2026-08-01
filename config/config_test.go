@@ -87,3 +87,73 @@ func TestInvalidEnvironmentTimeoutReturnsError(t *testing.T) {
 		t.Fatal("expected invalid environment timeout error")
 	}
 }
+
+func TestLoadThemePresetAndColorOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := []byte("" +
+		"[theme]\n" +
+		"preset = \"midnight\"\n" +
+		"[theme.colors]\n" +
+		"selection_background = \"#ff00aa\"\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settings.Theme.Preset != "midnight" {
+		t.Fatalf("expected midnight preset, got %q", settings.Theme.Preset)
+	}
+	if settings.Theme.Colors.SelectionBackground != "#ff00aa" {
+		t.Fatalf("expected custom selection background, got %q", settings.Theme.Colors.SelectionBackground)
+	}
+	if settings.Theme.Colors.Accent != "#82aaff" {
+		t.Fatalf("expected midnight accent to remain, got %q", settings.Theme.Colors.Accent)
+	}
+}
+
+func TestLoadRejectsUnknownThemePreset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[theme]\npreset = \"unknown\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected unknown theme preset error")
+	}
+}
+
+func TestLoadRejectsInvalidThemeColor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[theme.colors]\naccent = \"not-a-color\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected invalid theme color error")
+	}
+}
+
+func TestSaveThemePreservesOtherConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[execution]\ntimeout = \"12s\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	theme, err := ThemeSettingsForPreset("nord")
+	if err != nil {
+		t.Fatalf("get theme: %v", err)
+	}
+	if err := SaveTheme(path, theme); err != nil {
+		t.Fatalf("save theme: %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if settings.Theme.Preset != "nord" {
+		t.Fatalf("expected nord theme, got %q", settings.Theme.Preset)
+	}
+	if settings.ExecTimeout != 12*time.Second {
+		t.Fatalf("expected execution timeout to be preserved, got %s", settings.ExecTimeout)
+	}
+}

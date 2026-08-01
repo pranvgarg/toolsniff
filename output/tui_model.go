@@ -11,6 +11,8 @@ import (
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/timer"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/pranvgarg/toolsniff/config"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/registry"
 	"github.com/pranvgarg/toolsniff/scanner"
@@ -41,13 +43,19 @@ type tuiModel struct {
 	sources     map[string]scanner.SourceInfo
 	activeTab   int
 	content     table.Model
+	styles      ThemeStyles
 	filtering   bool
 	filterQuery string
 	realTools   []model.Tool
 	regPath     string
 	statusMsg   string
+	configPath  string
 	warnings    []scanner.Warning
 	version     string
+	theme       config.ThemeSettings
+	themeNames  []string
+	themePicker bool
+	themeIndex  int
 
 	keys keyMap
 	help help.Model
@@ -66,6 +74,8 @@ type TUIOptions struct {
 	Sources      []scanner.SourceInfo
 	RegistryPath string
 	Version      string
+	Theme        config.ThemeSettings
+	ConfigPath   string
 }
 
 // keyMap defines every key binding the TUI recognizes, satisfying
@@ -82,6 +92,7 @@ type keyMap struct {
 	Diff    key.Binding
 	Save    key.Binding
 	Help    key.Binding
+	Theme   key.Binding
 	Quit    key.Binding
 }
 
@@ -123,6 +134,10 @@ var defaultKeyMap = keyMap{
 		key.WithKeys("?"),
 		key.WithHelp("?", "toggle help"),
 	),
+	Theme: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "theme"),
+	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
@@ -135,6 +150,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 		key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "move")),
 		key.NewBinding(key.WithKeys("left", "right", "tab"), key.WithHelp("←/→/tab", "switch tab")),
 		k.Filter,
+		k.Theme,
 		k.Help,
 		k.Quit,
 	}
@@ -145,11 +161,12 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PrevTab, k.NextTab, k.JumpTab},
-		{k.Filter, k.Diff, k.Save, k.Help, k.Quit},
+		{k.Filter, k.Diff, k.Save, k.Help, k.Theme, k.Quit},
 	}
 }
 
 func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) tuiModel {
+	styles := NewThemeStyles(options.Theme)
 	toolsBySrc := map[string][]model.Tool{}
 	for _, t := range realTools {
 		toolsBySrc[t.Source] = append(toolsBySrc[t.Source], t)
@@ -184,17 +201,21 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 		table.WithRows(rowsFor(toolsBySrc[tabs[0]], "")),
 		table.WithFocused(true),
 	)
-	t.SetStyles(contentTableStyles())
+	t.SetStyles(styles.Table)
 
 	return tuiModel{
 		tabs:        tabs,
 		toolsBySrc:  toolsBySrc,
 		sources:     sources,
 		content:     t,
+		styles:      styles,
 		realTools:   realTools,
 		regPath:     options.RegistryPath,
 		warnings:    warnings,
 		version:     options.Version,
+		theme:       options.Theme,
+		themeNames:  config.ThemePresets(),
+		configPath:  options.ConfigPath,
 		keys:        defaultKeyMap,
 		help:        help.New(),
 		splashTimer: newSplashTimer(),
@@ -204,6 +225,89 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 func (m tuiModel) isInformationalTab(tab string) bool {
 	info, ok := m.sources[tab]
 	return ok && (info.Informational || info.Role == model.RoleHistory)
+}
+
+func (m *tuiModel) openThemePicker() {
+	m.themeNames = config.ThemePresets()
+	m.themeIndex = 0
+	for i, name := range m.themeNames {
+		if name == m.theme.Preset {
+			m.themeIndex = i
+			break
+		}
+	}
+	m.themePicker = true
+}
+
+func (m *tuiModel) updateThemePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.themePicker = false
+		return m, nil
+	case "up", "k":
+		m.themeIndex = (m.themeIndex - 1 + len(m.themeNames)) % len(m.themeNames)
+		return m, nil
+	case "down", "j":
+		m.themeIndex = (m.themeIndex + 1) % len(m.themeNames)
+		return m, nil
+	case "enter":
+		name := m.themeNames[m.themeIndex]
+		theme, err := config.ThemeSettingsForPreset(name)
+		if err != nil {
+			m.statusMsg = "theme failed: " + err.Error()
+			m.themePicker = false
+			return m, nil
+		}
+		m.theme = theme
+		m.styles = NewThemeStyles(theme)
+		m.content.SetStyles(m.styles.Table)
+		m.themePicker = false
+		if err := config.SaveTheme(m.configPath, theme); err != nil {
+			m.statusMsg = "theme applied, save failed: " + err.Error()
+		} else {
+			m.statusMsg = "theme: " + name
+		}
+		m.resizeContent()
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m tuiModel) renderThemePicker() string {
+	width, height := m.width, m.height
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+
+	lines := []string{m.styles.HeaderTitle.Render("Choose a theme"), ""}
+	for i, name := range m.themeNames {
+		preview, err := config.ThemeSettingsForPreset(name)
+		if err != nil {
+			continue
+		}
+		previewStyles := NewThemeStyles(preview)
+		label := "  " + name
+		if i == m.themeIndex {
+			label = "▸ " + name
+			lines = append(lines, previewStyles.ActiveTab.Render(label))
+		} else {
+			lines = append(lines, previewStyles.Tab.Render(label))
+		}
+	}
+	lines = append(lines, "", m.styles.Footer.Render("↑/↓ choose · enter apply · esc cancel"))
+
+	panelWidth := 34
+	if width-4 < panelWidth {
+		panelWidth = width - 4
+	}
+	if panelWidth < 12 {
+		panelWidth = 12
+	}
+	panel := m.styles.Panel.Width(panelWidth).Render(strings.Join(lines, "\n"))
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, panel)
 }
 
 // versionOrPath returns a tool's version, falling back to its path when no
@@ -321,6 +425,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.themePicker {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+			return m.updateThemePicker(keyMsg)
+		}
+		return m, nil
+	}
+
 	if m.splashPhase != splashDone {
 		return m.updateSplash(msg)
 	}
@@ -345,6 +456,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resizeContent()
 				return m, nil
 			case "enter":
+				if strings.EqualFold(strings.TrimSpace(m.filterQuery), "theme") {
+					m.filtering = false
+					m.filterQuery = ""
+					m.openThemePicker()
+					m.resizeContent()
+					return m, nil
+				}
 				m.filtering = false
 				m.resizeContent()
 				return m, nil
@@ -370,6 +488,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(keyMsg, m.keys.Filter):
 			m.filtering = true
 			m.resizeContent()
+			return m, nil
+		case key.Matches(keyMsg, m.keys.Theme):
+			m.openThemePicker()
 			return m, nil
 		case key.Matches(keyMsg, m.keys.NextTab):
 			m.activeTab = (m.activeTab + 1) % len(m.tabs)
@@ -450,10 +571,10 @@ func (m tuiModel) footerHint() string {
 func (m tuiModel) footerLines() []string {
 	var lines []string
 	for _, w := range m.warnings {
-		lines = append(lines, footerStyle.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
+		lines = append(lines, m.styles.Warning.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
 	}
 	if m.statusMsg != "" {
-		lines = append(lines, statusStyle.Render(m.statusMsg))
+		lines = append(lines, m.styles.Status.Render(m.statusMsg))
 	}
 	lines = append(lines, strings.Split(m.footerHint(), "\n")...)
 	return lines
@@ -461,13 +582,15 @@ func (m tuiModel) footerLines() []string {
 
 func (m tuiModel) View() tea.View {
 	if m.splashPhase != splashDone {
-		view := tea.NewView(renderSplash(m.splashLines, m.width, m.height, m.version))
+		view := tea.NewView(renderSplash(m.splashLines, m.width, m.height, m.version, m.styles))
 		view.AltScreen = true
 		return view
 	}
 
 	var body string
-	if m.width > 0 && m.width < compactWidthThreshold {
+	if m.themePicker {
+		body = m.renderThemePicker()
+	} else if m.width > 0 && m.width < compactWidthThreshold {
 		footer := strings.Join(m.footerLines(), "\n")
 		body = m.renderCompact() + "\n" + m.content.View() + "\n" + footer
 	} else {

@@ -42,12 +42,6 @@ var wordmarkLines = []string{
 	`   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝    ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝`,
 }
 
-var (
-	wordmarkStyle = lipgloss.NewStyle().Foreground(colorAmber).Bold(true)
-	versionStyle  = lipgloss.NewStyle().Foreground(colorMuted)
-	splashBorder  = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(colorMuted)
-)
-
 // splashDissolveTickMsg fires on each dissolve animation frame.
 type splashDissolveTickMsg struct{}
 
@@ -129,7 +123,7 @@ func (m tuiModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 // renderSplash draws the splash frame: a sharp-cornered border matching
 // the terminal size, containing the (possibly dissolving) wordmark and
 // version line, centered both horizontally and vertically.
-func renderSplash(lines []string, width, height int, version string) string {
+func renderSplash(lines []string, width, height int, version string, styles ThemeStyles) string {
 	if lines == nil {
 		lines = wordmarkLines
 	}
@@ -142,7 +136,7 @@ func renderSplash(lines []string, width, height int, version string) string {
 	if version == "" {
 		version = "dev"
 	}
-	versionLine := versionStyle.Render("toolsniff  v" + version)
+	versionLine := styles.Version.Render("toolsniff  v" + version)
 
 	var block string
 	if width-2 < wordmarkWidth() {
@@ -150,18 +144,18 @@ func renderSplash(lines []string, width, height int, version string) string {
 		// border and get clipped by the terminal itself. Fall back to a
 		// plain text lockup instead, same graceful-degradation approach the
 		// main frame's header uses below its own narrow-width threshold.
-		block = lipgloss.JoinVertical(lipgloss.Center, wordmarkStyle.Render("◆ toolsniff"), "", versionLine)
+		block = lipgloss.JoinVertical(lipgloss.Center, styles.Wordmark.Render("◆ toolsniff"), "", versionLine)
 	} else {
 		styledWordmark := make([]string, len(lines))
 		for i, l := range lines {
-			styledWordmark[i] = wordmarkStyle.Render(l)
+			styledWordmark[i] = styles.Wordmark.Render(l)
 		}
 		wordmark := lipgloss.JoinVertical(lipgloss.Left, styledWordmark...)
 		block = lipgloss.JoinVertical(lipgloss.Center, wordmark, "", versionLine)
 	}
 
 	inner := lipgloss.Place(width-2, height-2, lipgloss.Center, lipgloss.Center, block)
-	return splashBorder.Width(width - 2).Height(height - 2).Render(inner)
+	return styles.SplashBorder.Width(width - 2).Height(height - 2).Render(inner)
 }
 
 // wordmarkWidth returns the widest line in wordmarkLines, in cells.

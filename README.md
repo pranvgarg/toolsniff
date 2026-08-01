@@ -104,6 +104,14 @@ bin_dir = "~/.cargo/bin"
 [bun]
 enabled = true
 
+[theme]
+preset = "toolsniff"
+
+[theme.colors]
+# Optional overrides. Colors must use #RRGGBB values.
+# selection_background = "#7fd8c4"
+# selection_foreground = "#081018"
+
 [registry]
 path = "~/.toolsniff/registry.json"
 
@@ -194,8 +202,14 @@ real observations rather than one merged, ambiguous record.
 - `/` — filter the active source temporarily
 - `d` — jump to the new-observations tab
 - `s` — save the installed baseline
+- `t` — open the theme picker
+- `/theme` — open the theme picker through the command-style filter prompt
 - `?` — toggle help
 - `q` — quit
+
+The theme picker applies a preset immediately and saves the selected preset to
+the configured TOML file. Use `↑` / `↓` to choose, `enter` to apply, and
+`esc` to cancel.
 
 ## Scope
 

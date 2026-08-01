@@ -1,4 +1,6 @@
 /toolsniff
+/dist/
+/.serena/
 *.test
 *.out
 .DS_Store

@@ -34,6 +34,14 @@ bin_dir = "~/.cargo/bin"
 [bun]
 enabled = true
 
+[theme]
+preset = "toolsniff"
+
+[theme.colors]
+# Optional overrides. Colors must use #RRGGBB values.
+# selection_background = "#7fd8c4"
+# selection_foreground = "#081018"
+
 [registry]
 path = "~/.toolsniff/registry.json"
 
@@ -55,6 +63,17 @@ discovery. These are optional noise controls, not required tool inventories.
 `bun.enabled` controls discovery through Bun's `bun pm bin -g` command. Bun's
 reported global bin directory is used; toolsniff does not assume a fixed Bun
 installation path.
+
+`theme.preset` controls the complete TUI palette. Available presets are
+`toolsniff`, `midnight`, `nord`, `mono`, and `high-contrast`. Individual
+semantic colors can override a preset without changing source code. The active
+source and selected table row both use the selection foreground/background
+tokens, so the two-pane selection remains visually consistent.
+
+The same presets can be selected from inside the TUI with `t` or by entering
+`/theme`. Applying a preset immediately rebuilds the Bubble Tea/Lip Gloss
+styles and saves the selected preset to the configured TOML file. Use `esc` to
+close the picker without changing the theme.
 
 ## Environment Overrides
 

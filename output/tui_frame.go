@@ -52,8 +52,9 @@ func sidebarDims(tabs []string, toolsBySrc map[string][]model.Tool) (labelWidth,
 // including the leading number+space prefix.
 func sidebarWidth(tabs []string, toolsBySrc map[string][]model.Tool) int {
 	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc)
-	// "N " + label + " " + count
-	return 2 + labelWidth + 1 + countWidth
+	// "▸N " + label + " " + count. The leading indicator reserves space
+	// for every row so selection never shifts the sidebar layout.
+	return 3 + labelWidth + 1 + countWidth
 }
 
 // contentPaneWidth returns the width available to the content pane given
@@ -123,23 +124,23 @@ func truncateTail(s string, width int) string {
 // and stats stamp embedded directly into the border, e.g.:
 //
 //	┌─ ◆ toolsniff ─ dev & AI CLI inventory ── ... ── 47 tools · 6 sources ─┐
-func renderHeaderLine(width int, title, tagline, stats string) string {
+func renderHeaderLine(width int, title, tagline, stats string, styles ThemeStyles) string {
 	inner := width - 2
 	if inner < 0 {
 		inner = 0
 	}
 
 	build := func(tagline, stats string) (left, right string) {
-		left = headerBorderStyle.Render("─ ") + headerTitleStyle.Render(title)
+		left = styles.HeaderBorder.Render("─ ") + styles.HeaderTitle.Render(title)
 		if tagline != "" {
-			left += headerBorderStyle.Render(" ─ ") + headerTaglineStyle.Render(tagline)
+			left += styles.HeaderBorder.Render(" ─ ") + styles.HeaderTagline.Render(tagline)
 		}
-		left += headerBorderStyle.Render(" ")
-		right = headerBorderStyle.Render(" ")
+		left += styles.HeaderBorder.Render(" ")
+		right = styles.HeaderBorder.Render(" ")
 		if stats != "" {
-			right += headerStatsStyle.Render(stats) + headerBorderStyle.Render(" ")
+			right += styles.HeaderStats.Render(stats) + styles.HeaderBorder.Render(" ")
 		}
-		right += headerBorderStyle.Render("─")
+		right += styles.HeaderBorder.Render("─")
 		return left, right
 	}
 
@@ -160,35 +161,39 @@ func renderHeaderLine(width int, title, tagline, stats string) string {
 	if fillLen < 1 {
 		fillLen = 1
 	}
-	fill := headerBorderStyle.Render(strings.Repeat("─", fillLen))
+	fill := styles.HeaderBorder.Render(strings.Repeat("─", fillLen))
 
-	return headerBorderStyle.Render("┌") + left + fill + right + headerBorderStyle.Render("┐")
+	return styles.HeaderBorder.Render("┌") + left + fill + right + styles.HeaderBorder.Render("┐")
 }
 
 // renderSidebarLines renders one row per tab (numbered, active-styled),
 // padded/truncated to rowCount rows so it lines up with the content pane.
-func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model.Tool, rowCount int) []string {
+func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model.Tool, rowCount int, styles ThemeStyles) []string {
 	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc)
-	width := 2 + labelWidth + 1 + countWidth
+	width := 3 + labelWidth + 1 + countWidth
 
 	lines := make([]string, 0, rowCount)
 	for i, t := range tabs {
 		if i >= rowCount {
 			break
 		}
-		row := fmt.Sprintf("%d %-*s %*d", i+1, labelWidth, sidebarLabel(t), countWidth, len(toolsBySrc[t]))
+		indicator := " "
+		if i == active {
+			indicator = "▸"
+		}
+		row := fmt.Sprintf("%s%d %-*s %*d", indicator, i+1, labelWidth, sidebarLabel(t), countWidth, len(toolsBySrc[t]))
 		row = fitWidth(row, width)
 
 		var styled string
 		switch {
 		case i == active && t == newTabID:
-			styled = activeNewTabStyle.Render(row)
+			styled = styles.ActiveNewTab.Render(row)
 		case i == active:
-			styled = activeTabStyle.Render(row)
+			styled = styles.ActiveTab.Render(row)
 		case t == newTabID:
-			styled = newTabStyle.Render(row)
+			styled = styles.NewTab.Render(row)
 		default:
-			styled = tabStyle.Render(row)
+			styled = styles.Tab.Render(row)
 		}
 		lines = append(lines, styled)
 	}
@@ -221,7 +226,7 @@ func (m tuiModel) renderFrame() string {
 	}
 	stats := fmt.Sprintf("%d installed · %d available · %d sources", installedTools, availableCommands, sourceCount)
 
-	top := renderHeaderLine(width, "◆ toolsniff", "dev & AI CLI inventory", stats)
+	top := renderHeaderLine(width, "◆ toolsniff", "dev & AI CLI inventory", stats, m.styles)
 
 	footerLines := m.footerLines()
 
@@ -229,7 +234,7 @@ func (m tuiModel) renderFrame() string {
 	cWidth := contentPaneWidth(width, sbWidth)
 	rowCount := contentPaneHeight(height, len(footerLines))
 
-	sidebarLines := renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount)
+	sidebarLines := renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount, m.styles)
 	contentLines := strings.Split(m.content.View(), "\n")
 
 	rows := make([]string, rowCount)
@@ -242,7 +247,7 @@ func (m tuiModel) renderFrame() string {
 	}
 
 	sep := "├" + strings.Repeat("─", sbWidth+2) + "┴" + strings.Repeat("─", cWidth+2) + "┤"
-	sep = headerBorderStyle.Render(sep)
+	sep = m.styles.HeaderBorder.Render(sep)
 
 	// Each line of the footer gets its own bordered row: a multi-line
 	// footer (the full key-binding help, toggled via "?") must not be
@@ -253,7 +258,7 @@ func (m tuiModel) renderFrame() string {
 		footerBlock[i] = "│ " + fitWidth(line, width-4) + " │"
 	}
 
-	bottom := headerBorderStyle.Render("└" + strings.Repeat("─", width-2) + "┘")
+	bottom := m.styles.HeaderBorder.Render("└" + strings.Repeat("─", width-2) + "┘")
 
 	lines := make([]string, 0, rowCount+3+len(footerBlock))
 	lines = append(lines, top)
@@ -273,17 +278,17 @@ func (m tuiModel) renderCompact() string {
 		if i == m.activeTab {
 			label := fmt.Sprintf("[%d %s·%d]", i+1, t, count)
 			if t == newTabID {
-				parts[i] = activeNewTabStyle.Render(label)
+				parts[i] = m.styles.ActiveNewTab.Render(label)
 			} else {
-				parts[i] = activeTabStyle.Render(label)
+				parts[i] = m.styles.ActiveTab.Render(label)
 			}
 			continue
 		}
 		label := fmt.Sprintf("%d", i+1)
 		if t == newTabID {
-			parts[i] = newTabStyle.Render(label + "⚠")
+			parts[i] = m.styles.NewTab.Render(label + "⚠")
 		} else {
-			parts[i] = tabStyle.Render(label)
+			parts[i] = m.styles.Tab.Render(label)
 		}
 	}
 	return strings.Join(parts, " ")

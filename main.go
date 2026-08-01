@@ -84,9 +84,10 @@ func main() {
 	versionFlag := flag.Bool("version", false, "print the toolsniff version and exit")
 	configFlag := flag.String("config", config.DefaultConfigPath(), "path to the TOML configuration file")
 	flag.Parse()
+	appVersion := version.Current()
 
 	if *versionFlag {
-		fmt.Println(version.Version)
+		fmt.Println(appVersion)
 		return
 	}
 
@@ -165,7 +166,9 @@ func main() {
 		if err := output.RunTUI(realTools, npxHistory, diff, warnings, output.TUIOptions{
 			Sources:      registrationSources(registrations),
 			RegistryPath: regPath,
-			Version:      version.Version,
+			Version:      appVersion,
+			Theme:        settings.Theme,
+			ConfigPath:   settings.ConfigPath,
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

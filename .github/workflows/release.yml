@@ -23,6 +23,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG"
+            echo "Expected vMAJOR.MINOR.PATCH, optionally with a prerelease suffix"
+            exit 1
+          fi
+
       - name: Release
         uses: goreleaser/goreleaser-action@v6
         with:
