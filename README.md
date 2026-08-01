@@ -41,22 +41,58 @@ through Homebrew and npm, both observations remain visible. A PATH result is
 reported as an available command, not falsely presented as another package
 manager installation.
 
-## Install With Homebrew
+## Install
 
-After the Homebrew tap is published:
+### Homebrew
+
+Homebrew installation will be available after the first tagged release and
+tap publication:
 
 ```bash
 brew tap pranvgarg/toolsniff
 brew install toolsniff
 ```
 
-For a source build, Go 1.26 or newer is required:
+### Build From Source
 
 ```bash
 git clone https://github.com/pranvgarg/toolsniff.git
 cd toolsniff
 go build -o toolsniff .
 ```
+
+The current release targets macOS and requires Go 1.26 or newer for source
+builds.
+
+## Quick Start
+
+Run a one-time report first:
+
+```bash
+toolsniff --list
+```
+
+Save the current installed-tool inventory as your baseline:
+
+```bash
+toolsniff --save
+```
+
+Later, check what was installed or removed:
+
+```bash
+toolsniff --diff
+```
+
+Launch the interactive interface when you want to browse sources, filter
+results, or change the theme:
+
+```bash
+toolsniff
+```
+
+The first scan may show warnings for package managers that are not installed.
+Those warnings do not prevent the other scanners from completing.
 
 ## Usage
 
@@ -137,6 +173,31 @@ TOOLSNIFF_EXEC_TIMEOUT=15s toolsniff --json
 The scanner also respects standard environment values such as
 `NPM_CONFIG_CACHE`, `CARGO_HOME`, and `PATH`.
 
+### Themes
+
+The TUI includes built-in `toolsniff`, `midnight`, `nord`, `mono`, and
+`high-contrast` themes.
+
+Inside the TUI:
+
+- Press `?` to open the full help view, then use `t` to open the theme picker.
+- Press `t` directly to open the theme picker.
+- Type `/theme` and press `enter` to open it through the command prompt.
+- Use `↑` / `↓` or `j` / `k` to choose a theme.
+- Press `enter` to apply and persist it.
+- Press `esc` to cancel.
+
+The selected theme is saved to the configured TOML file. You can also select
+one before starting the TUI:
+
+```toml
+[theme]
+preset = "nord"
+```
+
+Individual selection colors can be overridden under `[theme.colors]` without
+changing the source code.
+
 ## Output
 
 `--list` groups observations by source. Installed observations and PATH
@@ -193,6 +254,10 @@ environment variables.
 The registry keeps different sources and executable paths separate. Installing
 the same package through two package managers is therefore represented as two
 real observations rather than one merged, ambiguous record.
+
+The baseline is intentionally separate from npx history. npx history records
+one-off cached executions and can change frequently, so it is shown for
+reference but does not create installation-change alerts.
 
 ## TUI Controls
 
