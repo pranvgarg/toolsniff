@@ -51,7 +51,7 @@ Homebrew installation is available from the toolsniff tap:
 brew tap pranvgarg/toolsniff
 # Homebrew 6 may require this once for a custom tap:
 brew trust pranvgarg/toolsniff
-brew install toolsniff
+brew install pranvgarg/toolsniff/toolsniff
 ```
 
 ### Build From Source
@@ -89,7 +89,7 @@ After updating, refresh Homebrew and retry:
 
 ```bash
 brew update
-brew install toolsniff
+brew install pranvgarg/toolsniff/toolsniff
 ```
 
 Only if the installer remains stuck on an outdated standalone Command Line
