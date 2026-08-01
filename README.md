@@ -45,11 +45,12 @@ manager installation.
 
 ### Homebrew
 
-Homebrew installation will be available after the first tagged release and
-tap publication:
+Homebrew installation is available from the toolsniff tap:
 
 ```bash
 brew tap pranvgarg/toolsniff
+# Homebrew 6 may require this once for a custom tap:
+brew trust pranvgarg/toolsniff
 brew install toolsniff
 ```
 
@@ -63,6 +64,41 @@ go build -o toolsniff .
 
 The current release targets macOS and requires Go 1.26 or newer for source
 builds.
+
+### Homebrew Troubleshooting
+
+The formula installs a prebuilt macOS binary. It does not compile toolsniff
+from source. Homebrew itself may require current Apple Command Line Tools,
+even for a prebuilt formula.
+
+If Homebrew reports that the Command Line Tools are outdated:
+
+```bash
+xcode-select --install
+```
+
+If macOS reports that they are already installed but Homebrew still rejects
+them, update Command Line Tools through **System Settings > General > Software
+Update**. You can inspect the active developer tools path with:
+
+```bash
+xcode-select -p
+```
+
+After updating, refresh Homebrew and retry:
+
+```bash
+brew update
+brew install toolsniff
+```
+
+Only if the installer remains stuck on an outdated standalone Command Line
+Tools installation should you reinstall it:
+
+```bash
+sudo rm -rf /Library/Developer/CommandLineTools
+xcode-select --install
+```
 
 ## Quick Start
 
