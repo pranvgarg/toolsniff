@@ -17,7 +17,7 @@ func NewPipxScanner(runner CommandRunner) *PipxScanner {
 	return &PipxScanner{runner: runner}
 }
 
-func (s *PipxScanner) Name() string { return "pipx" }
+func (s *PipxScanner) Name() string { return model.SourcePipx }
 
 func (s *PipxScanner) Scan() ([]model.Tool, error) {
 	out, err := runTolerant(s.runner, "pipx", "pipx", "list", "--json")

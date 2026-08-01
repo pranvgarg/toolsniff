@@ -14,6 +14,9 @@ func TestCargoScannerListsBinaries(t *testing.T) {
 			t.Fatalf("write fixture binary: %v", err)
 		}
 	}
+	if err := os.WriteFile(filepath.Join(dir, "not-executable"), []byte("text\n"), 0o644); err != nil {
+		t.Fatalf("write non-executable fixture: %v", err)
+	}
 
 	s := NewCargoScanner(dir)
 	if s.Name() != "cargo" {

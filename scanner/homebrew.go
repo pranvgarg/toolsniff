@@ -38,10 +38,10 @@ func NewHomebrewFormulaScanner(runner CommandRunner) *HomebrewFormulaScanner {
 	return &HomebrewFormulaScanner{runner: runner}
 }
 
-func (s *HomebrewFormulaScanner) Name() string { return "brew-formula" }
+func (s *HomebrewFormulaScanner) Name() string { return model.SourceBrewFormula }
 
 func (s *HomebrewFormulaScanner) Scan() ([]model.Tool, error) {
-	return runBrewList(s.runner, "brew-formula", "--formula")
+	return runBrewList(s.runner, model.SourceBrewFormula, "--formula")
 }
 
 // HomebrewCaskScanner discovers installed Homebrew casks (GUI apps).
@@ -53,8 +53,8 @@ func NewHomebrewCaskScanner(runner CommandRunner) *HomebrewCaskScanner {
 	return &HomebrewCaskScanner{runner: runner}
 }
 
-func (s *HomebrewCaskScanner) Name() string { return "brew-cask" }
+func (s *HomebrewCaskScanner) Name() string { return model.SourceBrewCask }
 
 func (s *HomebrewCaskScanner) Scan() ([]model.Tool, error) {
-	return runBrewList(s.runner, "brew-cask", "--cask")
+	return runBrewList(s.runner, model.SourceBrewCask, "--cask")
 }

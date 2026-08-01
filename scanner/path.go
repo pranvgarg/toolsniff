@@ -1,48 +1,86 @@
 package scanner
 
 import (
-	"sort"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/pranvgarg/toolsniff/model"
 )
 
-// PathLookup resolves a command name to its full path, matching the
-// signature of exec.LookPath so it can be passed directly in production.
-type PathLookup func(name string) (string, error)
-
-// PathScanner checks a curated candidate list against $PATH rather than
-// enumerating every binary on the system.
+// PathScanner discovers executable files in the directories supplied by the
+// process PATH. It excludes configured system directories, not a curated list
+// of executable names.
 type PathScanner struct {
-	lookup     PathLookup
-	candidates []string
+	directories []string
+	excluded    []string
+	ignoreNames map[string]struct{}
+	readDir     DirReader
+	stat        FileStat
 }
 
-func NewPathScanner(lookup PathLookup, candidates []string) *PathScanner {
-	return &PathScanner{lookup: lookup, candidates: candidates}
-}
-
-// DefaultPathCandidates is the curated list of dev/AI CLI tool names to
-// check for on $PATH. Extend this list to widen what the scanner picks up.
-func DefaultPathCandidates() []string {
-	return []string{
-		"claude", "ollama", "opencode", "gemini", "codex", "pi", "mo",
-		"gh", "vercel", "flyctl", "azd", "whisper-cpp", "aider",
-		"cursor", "cline", "continue", "llm", "sgpt", "cody", "warp",
-		"uv", "uvx", "ngrok",
+func NewPathScanner(directories, excluded, ignoreNames []string) *PathScanner {
+	ignored := make(map[string]struct{}, len(ignoreNames))
+	for _, name := range ignoreNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			ignored[name] = struct{}{}
+		}
+	}
+	return &PathScanner{
+		directories: uniquePaths(directories),
+		excluded:    uniquePaths(excluded),
+		ignoreNames: ignored,
+		readDir:     defaultDirReader,
+		stat:        defaultFileStat,
 	}
 }
 
-func (s *PathScanner) Name() string { return "path" }
+func (s *PathScanner) Name() string { return model.SourcePath }
 
 func (s *PathScanner) Scan() ([]model.Tool, error) {
 	tools := make([]model.Tool, 0)
-	for _, name := range s.candidates {
-		path, err := s.lookup(name)
-		if err != nil {
+	seen := make(map[string]struct{})
+	var scanErr error
+
+	for _, dir := range s.directories {
+		dir = filepath.Clean(dir)
+		if isPathExcluded(dir, s.excluded) {
 			continue
 		}
-		tools = append(tools, model.Tool{Name: name, Source: "path", Path: path})
+
+		found, err := ScanExecutableDir(dir, model.SourcePath, s.readDir, s.stat)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			scanErr = joinErrors(scanErr, fmtScanError(model.SourcePath, dir, err))
+			continue
+		}
+		for _, tool := range found {
+			if _, ignored := s.ignoreNames[tool.Name]; ignored {
+				continue
+			}
+			if _, ok := seen[tool.Path]; ok {
+				continue
+			}
+			seen[tool.Path] = struct{}{}
+			tools = append(tools, tool)
+		}
 	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, nil
+
+	sortToolsByNameAndPath(tools)
+	return tools, scanErr
+}
+
+func joinErrors(existing, next error) error {
+	if existing == nil {
+		return next
+	}
+	return errors.Join(existing, next)
+}
+
+func fmtScanError(source, path string, err error) error {
+	return errors.New(source + ": scanning " + path + ": " + err.Error())
 }

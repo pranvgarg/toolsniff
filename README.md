@@ -9,39 +9,48 @@
 
 # toolsniff
 
-Scans this machine for installed dev/AI CLI tools across npm, npx history,
-Homebrew (formulae + casks), pipx, cargo, `/Applications`, and `$PATH`, and
-shows them in an interactive terminal UI. Tracks what's new since the last
-scan via a saved baseline.
+`toolsniff` discovers developer tools and AI applications installed or
+available on a macOS machine and presents them as one inventory. It scans
+package managers, application roots, Bun's global bin directory, and the
+user's `PATH`, then tracks changes against a saved baseline.
 
-## What it does
+The inventory is discovery-based. It does not contain a compiled list of
+known AI tools. A new CLI or application is found automatically if it appears
+in one of the scanned locations.
 
-toolsniff runs eight scanners in parallel, each looking at a different place
-tools tend to get installed, and merges the results into one view:
+## What It Scans
 
-- **npm global** (`npm ls -g`) — packages installed globally with npm.
-- **npx history** — packages you've run via `npx` without installing them.
-  This is shown separately and *not* counted as "installed" — it's cache
-  from `~/.npm/_npx`, not a deliberate install, and it churns constantly as
-  you run one-off commands. Informational only.
-- **Homebrew formula** (`brew list --formula`) — CLI tools installed via
-  Homebrew.
-- **Homebrew cask** (`brew list --cask`) — GUI apps installed via Homebrew.
-- **pipx** — Python CLI tools installed in isolated environments via pipx.
-- **cargo** — Rust binaries installed with `cargo install` (read from your
-  cargo bin directory).
-- **Applications** — a keyword-filtered scan of `/Applications`, looking for
-  bundle names matching known dev/AI-relevant terms (e.g. `claude`,
-  `chatgpt`, `cursor`, `ollama`, `docker`, `windsurf`, `github desktop`).
-  This is filtered, not a full inventory of every installed app.
-- **`$PATH`** — a curated list of known dev/AI CLI tool names (e.g. `claude`,
-  `gh`, `ollama`, `codex`, `aider`, `ngrok`, `uv`) checked against your
-  `$PATH` with `exec.LookPath`. This is curated, not exhaustive — it checks
-  for specific known tools rather than scanning every binary on the system.
+The scanners run concurrently:
 
-## Install
+- **npm global** — top-level packages reported by `npm ls -g`.
+- **npx history** — packages found in npm's npx cache. Informational only; it
+  is not treated as an installed tool or included in the baseline.
+- **Homebrew formulae** — packages reported by `brew list --formula`.
+- **Homebrew casks** — applications reported by `brew list --cask`.
+- **pipx** — isolated Python applications reported by `pipx list --json`.
+- **Cargo** — executable files in Cargo's bin directory.
+- **Bun** — executable files in the directory returned by `bun pm bin -g`.
+- **Applications** — every `.app` bundle under `/Applications` and
+  `~/Applications`, without keyword filtering. Application bundles are not
+  recursively inspected internally.
+- **PATH** — executable files in the directories in `$PATH`, excluding the
+  standard macOS system directories.
 
-Requires Go 1.26+.
+Sources are intentionally kept separate. If the same command is installed
+through Homebrew and npm, both observations remain visible. A PATH result is
+reported as an available command, not falsely presented as another package
+manager installation.
+
+## Install With Homebrew
+
+After the Homebrew tap is published:
+
+```bash
+brew tap pranvgarg/toolsniff
+brew install toolsniff
+```
+
+For a source build, Go 1.26 or newer is required:
 
 ```bash
 git clone https://github.com/pranvgarg/toolsniff.git
@@ -49,92 +58,147 @@ cd toolsniff
 go build -o toolsniff .
 ```
 
-Put the binary on your `$PATH`, e.g.:
-
-```bash
-mkdir -p ~/go/bin
-mv toolsniff ~/go/bin/
-# add once to ~/.zshrc if not already there:
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zshrc
-```
-
 ## Usage
 
-```
-toolsniff                 # launch the interactive TUI (default)
-toolsniff --list          # plain grouped table, exits
-toolsniff --json          # full scan as JSON, exits
-toolsniff --save          # save current scan as the new baseline
-toolsniff --diff          # show only what changed since the last save
+```text
+toolsniff                  # launch the interactive TUI
+toolsniff --list           # print a grouped table and exit
+toolsniff --json           # print a machine-readable report and exit
+toolsniff --save           # save the current installed observations
+toolsniff --diff           # show changes since the saved baseline
+toolsniff --version        # print the installed release version
+toolsniff --config FILE    # use an explicit TOML configuration file
 ```
 
-### `--list`
+Only one report mode can be selected at a time.
 
-Groups tools by source, uppercased, with a count per group. `npx-history`
-gets its own labeled block since it's informational, and a "new since last
-scan" block appears if a baseline exists and something changed. A trimmed
-example:
+## Configuration
 
+The default configuration file is:
+
+```text
+~/.config/toolsniff/config.toml
 ```
+
+The file is optional. A default installation works without it. Configuration
+is for discovery policy and noise control, not for maintaining a list of tool
+names.
+
+Example:
+
+```toml
+[applications]
+roots = ["/Applications", "~/Applications"]
+ignore_paths = ["~/Applications/Old Tools"]
+
+[path]
+exclude_directories = ["/custom/system/bin"]
+ignore_names = ["internal-debug-tool"]
+
+[npx]
+dir = "~/.npm/_npx"
+
+[cargo]
+bin_dir = "~/.cargo/bin"
+
+[bun]
+enabled = true
+
+[registry]
+path = "~/.toolsniff/registry.json"
+
+[execution]
+timeout = "8s"
+```
+
+Configuration precedence is:
+
+1. Command-line flags
+2. `TOOLSNIFF_*` environment variables
+3. The TOML configuration file
+4. Platform-aware defaults
+
+Useful environment overrides include:
+
+```bash
+TOOLSNIFF_CONFIG=/tmp/toolsniff.toml toolsniff --list
+TOOLSNIFF_REGISTRY=/tmp/registry.json toolsniff --save
+TOOLSNIFF_EXEC_TIMEOUT=15s toolsniff --json
+```
+
+The scanner also respects standard environment values such as
+`NPM_CONFIG_CACHE`, `CARGO_HOME`, and `PATH`.
+
+## Output
+
+`--list` groups observations by source. Installed observations and PATH
+availability are counted separately:
+
+```text
 BREW-FORMULA (2)
   jq                             1.7.1
   ripgrep                        14.1.0
 
 PATH (1)
-  gh
+  gh                             /opt/homebrew/bin/gh
 
-NPX HISTORY (2, informational)
-  create-react-app               2024-03-11
-  cowsay                         2023-11-02
+NPX HISTORY (1, informational)
+  create-vite                    2026-07-31
 
-3 tools across 2 sources
+2 installed tools and 1 available command across 2 sources
 ```
 
-### `--json`
-
-Full machine-readable report: real tools, npx history, the added/removed
-diff against your saved baseline, and any scanner warnings. A trimmed
-example:
+`--json` includes source role and path information when available:
 
 ```json
 {
   "tools": [
-    { "name": "jq", "source": "brew-formula", "version": "1.7.1", "path": "" },
-    { "name": "gh", "source": "path", "version": "", "path": "/opt/homebrew/bin/gh" }
+    {
+      "name": "jq",
+      "source": "brew-formula",
+      "role": "installed",
+      "version": "1.7.1",
+      "path": ""
+    },
+    {
+      "name": "gh",
+      "source": "path",
+      "role": "available",
+      "version": "",
+      "path": "/opt/homebrew/bin/gh"
+    }
   ],
-  "npx_history": [
-    { "name": "cowsay", "source": "npx-history", "version": "2023-11-02", "path": "" }
-  ],
+  "npx_history": [],
   "added": [],
   "removed": [],
   "warnings": []
 }
 ```
 
-## Why the baseline/diff matters
+## Baseline and Diff
 
-Run `toolsniff --save` once to record everything currently installed as a
-baseline. Any time after that, `toolsniff --diff` (or just glancing at the
-TUI's "new" tab) tells you exactly what's changed since — what got added or
-removed. That's useful for noticing when something got installed by a setup
-script, an AI coding agent, or a `brew bundle` run you didn't watch closely,
-without having to manually diff your tool list in your head.
+Run `toolsniff --save` to create a baseline. Later, `toolsniff --diff` reports
+installed observations that were added or removed. The registry is stored at
+`~/.toolsniff/registry.json` by default and can be relocated through config or
+environment variables.
 
-## TUI walkthrough
+The registry keeps different sources and executable paths separate. Installing
+the same package through two package managers is therefore represented as two
+real observations rather than one merged, ambiguous record.
 
-- `↑` / `↓` — move the selection up and down within the current tab's list.
-- `tab` — cycle to the next source tab (npm, brew-formula, brew-cask, pipx,
-  cargo, applications, path, npx-history, and "new" if there's a diff).
-- `/` — start filtering the current tab's list by typed text.
-- `d` — jump straight to the "new since last scan" tab. This tab only
-  exists (and the key only does something) if there's an actual diff
-  against your saved baseline.
-- `s` — save the current scan as the new baseline; a status message at the
-  bottom confirms success or reports the failure.
-- `q` — quit.
+## TUI Controls
+
+- `↑` / `↓` — move through the active source
+- `←` / `→` / `tab` — switch source
+- `1`–`9` — jump to a source
+- `/` — filter the active source temporarily
+- `d` — jump to the new-observations tab
+- `s` — save the installed baseline
+- `?` — toggle help
+- `q` — quit
 
 ## Scope
 
-macOS only for now. Linux support (different package managers, no
-`/Applications` equivalent) is a planned follow-up — see
-`docs/superpowers/specs/2026-07-30-toolsniff-design.md`.
+The current release targets macOS. Linux support will add platform-specific
+package-manager and application-root scanners without changing the scanner
+interface.

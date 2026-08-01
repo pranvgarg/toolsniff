@@ -10,8 +10,11 @@ import (
 )
 
 func TestRenderJSONShape(t *testing.T) {
-	tools := []model.Tool{{Name: "gh", Source: "brew-formula"}}
-	npxHistory := []model.Tool{{Name: "create-vite", Source: "npx-history"}}
+	tools := []model.Tool{
+		{Name: "gh", Source: model.SourceBrewFormula, Role: model.RoleInstalled},
+		{Name: "gh", Source: model.SourcePath, Role: model.RoleAvailable, Path: "/opt/homebrew/bin/gh"},
+	}
+	npxHistory := []model.Tool{{Name: "create-vite", Source: model.SourceNPXHistory}}
 	diff := registry.Diff{Added: []model.Tool{{Name: "flyctl", Source: "brew-formula"}}}
 	warnings := []scanner.Warning{{Source: "pipx", Err: errFixture{"not found"}}}
 
@@ -25,8 +28,11 @@ func TestRenderJSONShape(t *testing.T) {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, data)
 	}
 
-	if len(report.Tools) != 1 || report.Tools[0].Name != "gh" {
+	if len(report.Tools) != 2 || report.Tools[0].Name != "gh" || report.Tools[0].Role != model.RoleInstalled {
 		t.Errorf("unexpected Tools: %+v", report.Tools)
+	}
+	if report.Tools[1].Source != model.SourcePath || report.Tools[1].Role != model.RoleAvailable || report.Tools[1].Path != "/opt/homebrew/bin/gh" {
+		t.Errorf("unexpected available tool: %+v", report.Tools[1])
 	}
 	if len(report.NPXHistory) != 1 || report.NPXHistory[0].Name != "create-vite" {
 		t.Errorf("unexpected NPXHistory: %+v", report.NPXHistory)

@@ -4,9 +4,15 @@ import (
 	"testing"
 
 	"github.com/pranvgarg/toolsniff/model"
+	"github.com/pranvgarg/toolsniff/scanner"
 )
 
-func TestSplitNPXHistory(t *testing.T) {
+func TestSplitByRole(t *testing.T) {
+	registrations := []scanner.Registration{
+		{SourceInfo: scanner.SourceInfo{ID: model.SourceBrewFormula, Role: model.RoleInstalled}},
+		{SourceInfo: scanner.SourceInfo{ID: model.SourcePath, Role: model.RoleAvailable}},
+		{SourceInfo: scanner.SourceInfo{ID: model.SourceNPXHistory, Role: model.RoleHistory, Informational: true}},
+	}
 	tests := []struct {
 		name        string
 		input       []model.Tool
@@ -16,18 +22,18 @@ func TestSplitNPXHistory(t *testing.T) {
 		{
 			name: "mix of npx-history and other sources",
 			input: []model.Tool{
-				{Name: "gh", Source: "brew-formula"},
-				{Name: "create-react-app", Source: "npx-history"},
-				{Name: "wget", Source: "path"},
-				{Name: "cowsay", Source: "npx-history"},
+				{Name: "gh", Source: model.SourceBrewFormula},
+				{Name: "create-react-app", Source: model.SourceNPXHistory},
+				{Name: "wget", Source: model.SourcePath},
+				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
 			wantReal: []model.Tool{
-				{Name: "gh", Source: "brew-formula"},
-				{Name: "wget", Source: "path"},
+				{Name: "gh", Source: model.SourceBrewFormula},
+				{Name: "wget", Source: model.SourcePath},
 			},
 			wantNPXHist: []model.Tool{
-				{Name: "create-react-app", Source: "npx-history"},
-				{Name: "cowsay", Source: "npx-history"},
+				{Name: "create-react-app", Source: model.SourceNPXHistory},
+				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
 		},
 		{
@@ -45,13 +51,13 @@ func TestSplitNPXHistory(t *testing.T) {
 		{
 			name: "all npx-history",
 			input: []model.Tool{
-				{Name: "create-react-app", Source: "npx-history"},
-				{Name: "cowsay", Source: "npx-history"},
+				{Name: "create-react-app", Source: model.SourceNPXHistory},
+				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
 			wantReal: nil,
 			wantNPXHist: []model.Tool{
-				{Name: "create-react-app", Source: "npx-history"},
-				{Name: "cowsay", Source: "npx-history"},
+				{Name: "create-react-app", Source: model.SourceNPXHistory},
+				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
 		},
 		{
@@ -64,7 +70,7 @@ func TestSplitNPXHistory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotReal, gotNPXHist := splitNPXHistory(tt.input)
+			gotReal, gotNPXHist := splitByRole(tt.input, registrations)
 
 			if !toolsEqual(gotReal, tt.wantReal) {
 				t.Errorf("real = %+v, want %+v", gotReal, tt.wantReal)

@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -10,69 +11,100 @@ import (
 	"github.com/pranvgarg/toolsniff/model"
 )
 
-// ApplicationsScanner finds dev/AI-relevant apps in /Applications, filtered
-// by keyword since the directory otherwise contains everything on the machine.
+// ApplicationsScanner discovers application bundles under configured user
+// application roots. It records every bundle instead of maintaining a list of
+// known product names.
 type ApplicationsScanner struct {
-	dir      string
-	keywords []string
+	roots       []string
+	ignorePaths []string
 }
 
-func NewApplicationsScanner(dir string, keywords []string) *ApplicationsScanner {
-	lowered := make([]string, len(keywords))
-	for i, kw := range keywords {
-		lowered[i] = strings.ToLower(kw)
-	}
-	return &ApplicationsScanner{dir: dir, keywords: lowered}
+func NewApplicationsScanner(roots, ignorePaths []string) *ApplicationsScanner {
+	return &ApplicationsScanner{roots: uniquePaths(roots), ignorePaths: uniquePaths(ignorePaths)}
 }
 
-// DefaultApplicationsDir returns the standard macOS /Applications path.
-func DefaultApplicationsDir() string { return "/Applications" }
-
-// DefaultApplicationKeywords is the curated list of substrings (matched
-// case-insensitively against app bundle names) considered dev/AI-relevant.
-// Extend this list to widen what the scanner picks up.
-func DefaultApplicationKeywords() []string {
-	return []string{
-		"claude", "chatgpt", "gpt", "cursor", "devin", "ollama",
-		"lm studio", "antigravity", "finetune", "agents", "wispr",
-		"copilot", "codex", "windsurf", "docker", "github desktop",
-	}
-}
-
-func (s *ApplicationsScanner) Name() string { return "applications" }
+func (s *ApplicationsScanner) Name() string { return model.SourceApplications }
 
 func (s *ApplicationsScanner) Scan() ([]model.Tool, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+	tools := make([]model.Tool, 0)
+	var scanErr error
+	seen := make(map[string]struct{})
+
+	for _, root := range s.roots {
+		root = filepath.Clean(root)
+		if _, err := os.Stat(root); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			scanErr = joinErrors(scanErr, fmt.Errorf("applications: checking %s: %w", root, err))
+			continue
 		}
-		return nil, fmt.Errorf("applications: %w", err)
+
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if !entry.IsDir() || !isApplicationBundle(entry.Name()) {
+				if entry.IsDir() && isPathExcluded(path, s.ignorePaths) {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if isPathExcluded(path, s.ignorePaths) {
+				return fs.SkipDir
+			}
+
+			path = filepath.Clean(path)
+			if _, ok := seen[path]; !ok {
+				seen[path] = struct{}{}
+				tools = append(tools, model.Tool{
+					Name:   entry.Name(),
+					Source: model.SourceApplications,
+					Path:   path,
+				})
+			}
+			// Application bundles can contain nested helper applications. They
+			// are part of the bundle, not separate user-installed applications.
+			return fs.SkipDir
+		})
+		if err != nil {
+			scanErr = joinErrors(scanErr, fmt.Errorf("applications: scanning %s: %w", root, err))
+		}
 	}
 
-	tools := make([]model.Tool, 0)
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".app") {
+	sortToolsByNameAndPath(tools)
+	return tools, scanErr
+}
+
+func isApplicationBundle(name string) bool {
+	return strings.EqualFold(filepath.Ext(name), ".app")
+}
+
+func uniquePaths(paths []string) []string {
+	seen := make(map[string]struct{}, len(paths))
+	unique := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.Clean(path)
+		if path == "." || path == "" {
 			continue
 		}
-		lower := strings.ToLower(name)
-		matched := false
-		for _, kw := range s.keywords {
-			if strings.Contains(lower, kw) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
+		if _, ok := seen[path]; ok {
 			continue
 		}
-		tools = append(tools, model.Tool{
-			Name:   name,
-			Source: "applications",
-			Path:   filepath.Join(s.dir, name),
-		})
+		seen[path] = struct{}{}
+		unique = append(unique, path)
 	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, nil
+	return unique
+}
+
+func sortToolsByNameAndPath(tools []model.Tool) {
+	sort.Slice(tools, func(i, j int) bool {
+		if tools[i].Name != tools[j].Name {
+			return tools[i].Name < tools[j].Name
+		}
+		return tools[i].Path < tools[j].Path
+	})
 }

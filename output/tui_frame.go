@@ -27,7 +27,7 @@ const frameFixedCols = 7
 // sidebarLabel returns the display label for a tab, appending a warning
 // glyph to the "new" tab so it stands out even when not the active tab.
 func sidebarLabel(tab string) string {
-	if tab == "new" {
+	if tab == newTabID {
 		return "new ⚠"
 	}
 	return tab
@@ -181,11 +181,11 @@ func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model
 
 		var styled string
 		switch {
-		case i == active && t == "new":
+		case i == active && t == newTabID:
 			styled = activeNewTabStyle.Render(row)
 		case i == active:
 			styled = activeTabStyle.Render(row)
-		case t == "new":
+		case t == newTabID:
 			styled = newTabStyle.Render(row)
 		default:
 			styled = tabStyle.Render(row)
@@ -210,23 +210,16 @@ func (m tuiModel) renderFrame() string {
 		height = 24
 	}
 
-	totalTools := 0
-	sourceCount := 0
-	for _, t := range m.tabs {
-		if t == "new" || t == "npx-history" {
-			continue
-		}
-		totalTools += len(m.toolsBySrc[t])
-		sourceCount++
-	}
-	if totalTools == 0 {
+	installedTools, availableCommands := countToolRoles(m.realTools)
+	sourceCount := countSources(m.realTools)
+	if installedTools == 0 && availableCommands == 0 {
 		// On a genuinely empty scan, tabs falls back to a ["npm"]
 		// placeholder so there's something to render, but that's not a
 		// real source: report 0, matching --list's "0 tools across 0
 		// sources" convention for an empty machine.
 		sourceCount = 0
 	}
-	stats := fmt.Sprintf("%d tools · %d sources", totalTools, sourceCount)
+	stats := fmt.Sprintf("%d installed · %d available · %d sources", installedTools, availableCommands, sourceCount)
 
 	top := renderHeaderLine(width, "◆ toolsniff", "dev & AI CLI inventory", stats)
 
@@ -279,7 +272,7 @@ func (m tuiModel) renderCompact() string {
 		count := len(m.toolsBySrc[t])
 		if i == m.activeTab {
 			label := fmt.Sprintf("[%d %s·%d]", i+1, t, count)
-			if t == "new" {
+			if t == newTabID {
 				parts[i] = activeNewTabStyle.Render(label)
 			} else {
 				parts[i] = activeTabStyle.Render(label)
@@ -287,7 +280,7 @@ func (m tuiModel) renderCompact() string {
 			continue
 		}
 		label := fmt.Sprintf("%d", i+1)
-		if t == "new" {
+		if t == newTabID {
 			parts[i] = newTabStyle.Render(label + "⚠")
 		} else {
 			parts[i] = tabStyle.Render(label)

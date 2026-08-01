@@ -9,10 +9,6 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// version is the toolsniff version shown on the splash screen. It will
-// likely be wired to a real --version flag later.
-const version = "0.1.0"
-
 // splashPhase models where the splash screen is in its lifecycle.
 type splashPhase int
 
@@ -133,7 +129,7 @@ func (m tuiModel) updateSplash(msg tea.Msg) (tea.Model, tea.Cmd) {
 // renderSplash draws the splash frame: a sharp-cornered border matching
 // the terminal size, containing the (possibly dissolving) wordmark and
 // version line, centered both horizontally and vertically.
-func renderSplash(lines []string, width, height int) string {
+func renderSplash(lines []string, width, height int, version string) string {
 	if lines == nil {
 		lines = wordmarkLines
 	}
@@ -143,6 +139,9 @@ func renderSplash(lines []string, width, height int) string {
 		width, height = 80, 24
 	}
 
+	if version == "" {
+		version = "dev"
+	}
 	versionLine := versionStyle.Render("toolsniff  v" + version)
 
 	var block string

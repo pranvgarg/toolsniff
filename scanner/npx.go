@@ -31,7 +31,7 @@ func DefaultNPXDir() string {
 	return filepath.Join(home, ".npm", "_npx")
 }
 
-func (s *NPXScanner) Name() string { return "npx-history" }
+func (s *NPXScanner) Name() string { return model.SourceNPXHistory }
 
 func (s *NPXScanner) Scan() ([]model.Tool, error) {
 	entries, err := os.ReadDir(s.npxDir)
@@ -39,7 +39,7 @@ func (s *NPXScanner) Scan() ([]model.Tool, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("npx-history: %w", err)
+		return nil, fmt.Errorf("%s: %w", model.SourceNPXHistory, err)
 	}
 
 	seen := map[string]time.Time{}
@@ -88,7 +88,7 @@ func (s *NPXScanner) Scan() ([]model.Tool, error) {
 		if !modTime.IsZero() {
 			version = modTime.Format("2006-01-02")
 		}
-		tools = append(tools, model.Tool{Name: name, Source: "npx-history", Version: version})
+		tools = append(tools, model.Tool{Name: name, Source: model.SourceNPXHistory, Role: model.RoleHistory, Version: version})
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools, nil

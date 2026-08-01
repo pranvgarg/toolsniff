@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/pranvgarg/toolsniff/model"
 )
@@ -28,28 +27,15 @@ func DefaultCargoBinDir() string {
 	return filepath.Join(home, ".cargo", "bin")
 }
 
-func (s *CargoScanner) Name() string { return "cargo" }
+func (s *CargoScanner) Name() string { return model.SourceCargo }
 
 func (s *CargoScanner) Scan() ([]model.Tool, error) {
-	entries, err := os.ReadDir(s.binDir)
+	tools, err := ScanExecutableDir(s.binDir, model.SourceCargo, defaultDirReader, defaultFileStat)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("cargo: %w", err)
 	}
-
-	tools := make([]model.Tool, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		tools = append(tools, model.Tool{
-			Name:   entry.Name(),
-			Source: "cargo",
-			Path:   filepath.Join(s.binDir, entry.Name()),
-		})
-	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	return tools, nil
 }

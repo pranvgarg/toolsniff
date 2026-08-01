@@ -5,17 +5,18 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/pranvgarg/toolsniff/model"
 )
 
-// execTimeout bounds how long an external command (brew, npm, pipx, ...) is
+// DefaultExecTimeout bounds how long an external command (brew, npm, pipx, ...) is
 // allowed to run. Without this, a hung external tool (cold Homebrew index,
 // slow NFS mount, etc.) would hang the whole program forever with no
 // feedback.
-const execTimeout = 8 * time.Second
+const DefaultExecTimeout = 8 * time.Second
 
 // Scanner discovers tools from a single source (a package manager, a
 // directory, a cache). Implementations must be safe to call concurrently
@@ -23,6 +24,23 @@ const execTimeout = 8 * time.Second
 type Scanner interface {
 	Name() string
 	Scan() ([]model.Tool, error)
+}
+
+// SourceInfo is the metadata shared by scan orchestration and renderers.
+// Keeping it beside Scanner prevents source ordering and source semantics from
+// being reimplemented in main and output packages.
+type SourceInfo struct {
+	ID            string
+	Order         int
+	Role          model.SourceRole
+	Informational bool
+}
+
+// Registration binds a scanner implementation to the metadata that describes
+// its observations.
+type Registration struct {
+	SourceInfo
+	Scanner Scanner
 }
 
 // CommandRunner runs an external command and returns its captured stdout.
@@ -33,10 +51,22 @@ type CommandRunner func(name string, args ...string) ([]byte, error)
 
 // ExecRunner is the real CommandRunner used outside of tests.
 func ExecRunner(name string, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), execTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.Output()
+	return NewExecRunner(DefaultExecTimeout)(name, args...)
+}
+
+// NewExecRunner returns a command runner with an explicit timeout. The
+// timeout is injected so installations with slower package-manager commands
+// can configure it without changing scanner behavior.
+func NewExecRunner(timeout time.Duration) CommandRunner {
+	if timeout <= 0 {
+		timeout = DefaultExecTimeout
+	}
+	return func(name string, args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, name, args...)
+		return cmd.Output()
+	}
 }
 
 // Warning records that one scanner failed without aborting the whole run.
@@ -73,12 +103,13 @@ func RunAll(scanners []Scanner) ([]model.Tool, []Warning) {
 	var allTools []model.Tool
 	var warnings []Warning
 	for r := range results {
+		allTools = append(allTools, r.tools...)
 		if r.err != nil {
 			warnings = append(warnings, Warning{Source: r.name, Err: r.err})
 			continue
 		}
-		allTools = append(allTools, r.tools...)
 	}
+	sort.Slice(warnings, func(i, j int) bool { return warnings[i].Source < warnings[j].Source })
 	return allTools, warnings
 }
 

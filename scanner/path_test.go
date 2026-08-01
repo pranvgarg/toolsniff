@@ -1,23 +1,25 @@
 package scanner
 
 import (
-	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestPathScannerChecksCandidates(t *testing.T) {
-	lookup := func(name string) (string, error) {
-		switch name {
-		case "claude":
-			return "/opt/homebrew/bin/claude", nil
-		case "ollama":
-			return "/usr/local/bin/ollama", nil
-		default:
-			return "", errors.New("not found")
-		}
+func TestPathScannerDiscoversExecutableFiles(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	if err := os.WriteFile(filepath.Join(first, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write claude: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(first, "not-executable"), []byte("text\n"), 0o644); err != nil {
+		t.Fatalf("write non-executable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(second, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write second claude: %v", err)
 	}
 
-	s := NewPathScanner(lookup, []string{"claude", "ollama", "nonexistent-tool"})
+	s := NewPathScanner([]string{first, second, first}, nil, nil)
 	if s.Name() != "path" {
 		t.Errorf("expected Name() == \"path\", got %q", s.Name())
 	}
@@ -26,18 +28,35 @@ func TestPathScannerChecksCandidates(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(tools) != 2 {
-		t.Fatalf("expected 2 found tools, got %d: %+v", len(tools), tools)
+		t.Fatalf("expected two distinct executable paths, got %d: %+v", len(tools), tools)
 	}
-	if tools[0].Name != "claude" || tools[0].Path != "/opt/homebrew/bin/claude" || tools[0].Source != "path" {
-		t.Errorf("unexpected first tool: %+v", tools[0])
+	if tools[0].Name != "claude" || tools[1].Name != "claude" || tools[0].Path == tools[1].Path {
+		t.Errorf("expected same name with separate paths, got %+v", tools)
 	}
 }
 
-func TestPathScannerEmptyCandidates(t *testing.T) {
-	s := NewPathScanner(func(string) (string, error) { return "", errors.New("nope") }, nil)
-	tools, err := s.Scan()
+func TestPathScannerExcludesSystemDirectories(t *testing.T) {
+	systemDir := t.TempDir()
+	userDir := t.TempDir()
+	for _, dir := range []string{systemDir, userDir} {
+		if err := os.WriteFile(filepath.Join(dir, "tool"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatalf("write tool: %v", err)
+		}
+	}
+
+	tools, err := NewPathScanner([]string{systemDir, userDir}, []string{systemDir}, nil).Scan()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Path != filepath.Join(userDir, "tool") {
+		t.Fatalf("unexpected tools: %+v", tools)
+	}
+}
+
+func TestPathScannerMissingDirectoryIsNotAnError(t *testing.T) {
+	tools, err := NewPathScanner([]string{filepath.Join(t.TempDir(), "does-not-exist")}, nil, nil).Scan()
+	if err != nil {
+		t.Fatalf("expected no error for missing directory, got %v", err)
 	}
 	if len(tools) != 0 {
 		t.Errorf("expected no tools, got %+v", tools)

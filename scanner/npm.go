@@ -17,7 +17,7 @@ func NewNPMScanner(runner CommandRunner) *NPMScanner {
 	return &NPMScanner{runner: runner}
 }
 
-func (s *NPMScanner) Name() string { return "npm" }
+func (s *NPMScanner) Name() string { return model.SourceNPM }
 
 func (s *NPMScanner) Scan() ([]model.Tool, error) {
 	out, err := runTolerant(s.runner, "npm", "npm", "ls", "-g", "--depth=0", "--json")

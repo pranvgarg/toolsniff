@@ -1,0 +1,48 @@
+version: 2
+
+project_name: toolsniff
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: toolsniff
+    main: .
+    binary: toolsniff
+    ldflags:
+      - -s -w -X github.com/pranvgarg/toolsniff/internal/version.Version={{.Version}}
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  draft: false
+  prerelease: auto
+
+# GoReleaser can publish this formula to a separate homebrew tap repository.
+# Set the tap repository owner/name when the tap is created.
+brews:
+  - name: toolsniff
+    repository:
+      owner: pranvgarg
+      name: homebrew-toolsniff
+    directory: Formula
+    homepage: https://github.com/pranvgarg/toolsniff
+    description: Discover installed developer and AI tools on macOS
+    license: MIT
+    test: |
+      system "#{bin}/toolsniff", "--version"

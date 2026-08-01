@@ -12,11 +12,11 @@ type Diff struct {
 	Removed []model.Tool
 }
 
-func toolKey(t model.Tool) string { return t.Source + "\x00" + t.Name }
+func toolKey(t model.Tool) string { return model.ToolIdentity(t) }
 
 // ComputeDiff compares an old baseline against a new scan, keyed on
-// (Source, Name) so the same tool name from two different sources is never
-// confused with itself.
+// (Source, Path) when a path is available, otherwise (Source, Name), so two
+// installation sources and two distinct executable locations remain visible.
 func ComputeDiff(old, new []model.Tool) Diff {
 	oldSet := make(map[string]model.Tool, len(old))
 	for _, t := range old {

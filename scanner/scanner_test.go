@@ -43,6 +43,22 @@ func TestRunAllCollectsToolsAndWarnings(t *testing.T) {
 	}
 }
 
+func TestRunAllKeepsPartialToolsWhenScannerWarns(t *testing.T) {
+	tools, warnings := RunAll([]Scanner{
+		stubScanner{
+			name:  "partial",
+			tools: []model.Tool{{Name: "kept", Source: "partial"}},
+			err:   errors.New("permission denied"),
+		},
+	})
+	if len(tools) != 1 || tools[0].Name != "kept" {
+		t.Fatalf("expected partial tools to be retained, got %+v", tools)
+	}
+	if len(warnings) != 1 || warnings[0].Source != "partial" {
+		t.Fatalf("expected one warning, got %+v", warnings)
+	}
+}
+
 func TestRunAllEmptyInput(t *testing.T) {
 	tools, warnings := RunAll(nil)
 	if len(tools) != 0 || len(warnings) != 0 {

@@ -63,8 +63,39 @@ func RenderTable(tools, npxHistory []model.Tool, diff registry.Diff, warnings []
 		fmt.Fprintf(&b, "warning: %s: %v\n", w.Source, w.Err)
 	}
 
-	fmt.Fprintf(&b, "%d tools across %d sources\n", len(tools), len(sources))
+	installed, available := countToolRoles(tools)
+	if available == 0 {
+		fmt.Fprintf(&b, "%d installed tools across %d sources\n", installed, len(sources))
+	} else {
+		label := "available command"
+		if available != 1 {
+			label = "available commands"
+		}
+		fmt.Fprintf(&b, "%d installed tools and %d %s across %d sources\n", installed, available, label, len(sources))
+	}
 	return b.String()
+}
+
+func countToolRoles(tools []model.Tool) (installed, available int) {
+	for _, tool := range tools {
+		if tool.Role == model.RoleAvailable || tool.Source == model.SourcePath {
+			available++
+		} else {
+			installed++
+		}
+	}
+	return installed, available
+}
+
+func countSources(tools []model.Tool) int {
+	sources := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		if tool.Role == model.RoleHistory || tool.Source == model.SourceNPXHistory {
+			continue
+		}
+		sources[tool.Source] = struct{}{}
+	}
+	return len(sources)
 }
 
 // RenderDiff renders just the added/removed tools, used by --diff and

@@ -14,7 +14,8 @@ and eventually distribute via Homebrew.
   is an explicit v2 concern — the scanner interface is designed to make that
   additive, not a rewrite, but no Linux code ships in v1.
 - Sources scanned: npm global, npx run-history, Homebrew formulae, Homebrew
-  casks, pipx, cargo, `/Applications`, raw `$PATH`.
+  casks, pipx, cargo, Bun global binaries, user application roots, and raw
+  `$PATH` executable discovery.
 - No daemon, no background service, no auto-update. Invoked on demand, exits
   when done (or when the user quits the TUI).
 
@@ -23,11 +24,9 @@ and eventually distribute via Homebrew.
 Single Go module, `main` plus four packages:
 
 - **`model`** — the shared `Tool` struct: `Name`, `Source`, `Version`, `Path`.
-  `Source` is the scanner's own identifier (`"npm"`, `"npx-history"`,
-  `"brew-formula"`, `"brew-cask"`, `"pipx"`, `"cargo"`, `"applications"`,
-  `"path"`) — it's what downstream code checks to separate npx history from
-  real installs, so there's no separate `Category` field. Pure data, no
-  behavior. Every other package consumes or produces `[]model.Tool`.
+  `Source` is the scanner's own identifier and `Role` distinguishes installed,
+  available-on-PATH, and informational history observations. Same-name tools
+  from different installation sources remain separate records.
 
 - **`scanner`** — one file per source, each implementing:
   ```go
@@ -41,9 +40,9 @@ Single Go module, `main` plus four packages:
   scanner. A failing scanner (tool not installed, directory missing) does not
   abort the run — see Error Handling below.
 
-  `npx.go` walks `~/.npm/_npx/*/package.json`, extracts the top-level
-  dependency name (the actual thing that was `npx`'d, not its transitive
-  deps), and tags results `Source: "npx-history"`.
+  `npx.go` walks npm's configured npx cache and resolves package names through
+  `.bin` symlinks. Bun discovery asks `bun pm bin -g` for its global bin
+  directory instead of assuming a fixed path.
 
 - **`registry`** — persists and diffs the baseline snapshot.
   - Location: `~/.toolsniff/registry.json`.
@@ -54,7 +53,8 @@ Single Go module, `main` plus four packages:
     yet" (empty slice + warning), so diff naturally shows everything as new
     on first run.
   - `Diff(old, new []model.Tool) (added, removed []model.Tool)` — pure
-    function, keyed on `(Source, Name)`.
+   function, keyed on `(Source, Path)` when a path is available and
+   `(Source, Name)` otherwise.
 
 - **`output`** — three renderers over the same `[]model.Tool` + diff result:
   - TUI (Bubbletea + Lipgloss) — default when no flags given.

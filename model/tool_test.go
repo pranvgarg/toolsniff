@@ -26,3 +26,15 @@ func TestToolJSONRoundTrip(t *testing.T) {
 		t.Errorf("unexpected JSON shape: %s", got)
 	}
 }
+
+func TestDeduplicateToolsKeepsSeparateSourcesAndPaths(t *testing.T) {
+	tools := DeduplicateTools([]Tool{
+		{Name: "tool", Source: SourcePath, Path: "/one/tool"},
+		{Name: "tool", Source: SourcePath, Path: "/one/tool"},
+		{Name: "tool", Source: SourcePath, Path: "/two/tool"},
+		{Name: "tool", Source: SourceNPM},
+	})
+	if len(tools) != 3 {
+		t.Fatalf("expected exact duplicate removal only, got %+v", tools)
+	}
+}

@@ -1,0 +1,22 @@
+[applications]
+roots = ["/Applications", "~/Applications"]
+ignore_paths = []
+
+[path]
+exclude_directories = []
+ignore_names = []
+
+[npx]
+dir = "~/.npm/_npx"
+
+[cargo]
+bin_dir = "~/.cargo/bin"
+
+[bun]
+enabled = true
+
+[registry]
+path = "~/.toolsniff/registry.json"
+
+[execution]
+timeout = "8s"

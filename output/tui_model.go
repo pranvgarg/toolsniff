@@ -28,13 +28,7 @@ const resizeDebounce = 120 * time.Millisecond
 // superseded resize can be detected and dropped.
 type resizeSettledMsg struct{ tag int }
 
-// tabOrder is the fixed, meaningful order tabs appear in: real sources
-// first (in scan-priority order), then npx-history (informational), then
-// "new" (only present when there's an actual diff).
-var tabOrder = []string{
-	"npm", "brew-formula", "brew-cask", "pipx", "cargo",
-	"applications", "path", "npx-history",
-}
+const newTabID = "new"
 
 // contentVersionColWidth is the fixed display width of the content table's
 // right-aligned Version column. It does not vary with terminal width; only
@@ -44,6 +38,7 @@ const contentVersionColWidth = 10
 type tuiModel struct {
 	tabs        []string
 	toolsBySrc  map[string][]model.Tool
+	sources     map[string]scanner.SourceInfo
 	activeTab   int
 	content     table.Model
 	filtering   bool
@@ -52,6 +47,7 @@ type tuiModel struct {
 	regPath     string
 	statusMsg   string
 	warnings    []scanner.Warning
+	version     string
 
 	keys keyMap
 	help help.Model
@@ -62,6 +58,14 @@ type tuiModel struct {
 	splashPhase splashPhase
 	splashLines []string
 	splashTimer timer.Model
+}
+
+// TUIOptions contains runtime metadata needed by the TUI. Keeping it in one
+// options value avoids growing RunTUI's positional argument list.
+type TUIOptions struct {
+	Sources      []scanner.SourceInfo
+	RegistryPath string
+	Version      string
 }
 
 // keyMap defines every key binding the TUI recognizes, satisfying
@@ -145,32 +149,34 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	}
 }
 
-func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) tuiModel {
+func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) tuiModel {
 	toolsBySrc := map[string][]model.Tool{}
 	for _, t := range realTools {
 		toolsBySrc[t.Source] = append(toolsBySrc[t.Source], t)
 	}
 	if len(npxHistory) > 0 {
-		toolsBySrc["npx-history"] = npxHistory
+		toolsBySrc[model.SourceNPXHistory] = npxHistory
 	}
 
 	if len(diff.Added) > 0 || len(diff.Removed) > 0 {
 		newTab := append([]model.Tool{}, diff.Added...)
 		newTab = append(newTab, diff.Removed...)
-		toolsBySrc["new"] = newTab
+		toolsBySrc[newTabID] = newTab
 	}
 
-	tabs := make([]string, 0, len(tabOrder)+1)
-	for _, src := range tabOrder {
-		if _, ok := toolsBySrc[src]; ok {
-			tabs = append(tabs, src)
+	sources := make(map[string]scanner.SourceInfo, len(options.Sources))
+	tabs := make([]string, 0, len(options.Sources)+1)
+	for _, source := range options.Sources {
+		sources[source.ID] = source
+		if _, ok := toolsBySrc[source.ID]; ok {
+			tabs = append(tabs, source.ID)
 		}
 	}
-	if _, ok := toolsBySrc["new"]; ok {
-		tabs = append(tabs, "new")
+	if _, ok := toolsBySrc[newTabID]; ok {
+		tabs = append(tabs, newTabID)
 	}
 	if len(tabs) == 0 {
-		tabs = []string{"npm"}
+		tabs = []string{model.SourceNPM}
 	}
 
 	t := table.New(
@@ -183,14 +189,21 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 	return tuiModel{
 		tabs:        tabs,
 		toolsBySrc:  toolsBySrc,
+		sources:     sources,
 		content:     t,
 		realTools:   realTools,
-		regPath:     regPath,
+		regPath:     options.RegistryPath,
 		warnings:    warnings,
+		version:     options.Version,
 		keys:        defaultKeyMap,
 		help:        help.New(),
 		splashTimer: newSplashTimer(),
 	}
+}
+
+func (m tuiModel) isInformationalTab(tab string) bool {
+	info, ok := m.sources[tab]
+	return ok && (info.Informational || info.Role == model.RoleHistory)
 }
 
 // versionOrPath returns a tool's version, falling back to its path when no
@@ -388,7 +401,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(keyMsg, m.keys.Diff):
 			for i, t := range m.tabs {
-				if t == "new" {
+				if t == newTabID {
 					m.activeTab = i
 					m.filtering = false
 					m.filterQuery = ""
@@ -448,7 +461,7 @@ func (m tuiModel) footerLines() []string {
 
 func (m tuiModel) View() tea.View {
 	if m.splashPhase != splashDone {
-		view := tea.NewView(renderSplash(m.splashLines, m.width, m.height))
+		view := tea.NewView(renderSplash(m.splashLines, m.width, m.height, m.version))
 		view.AltScreen = true
 		return view
 	}
@@ -467,8 +480,8 @@ func (m tuiModel) View() tea.View {
 }
 
 // RunTUI launches the interactive Bubbletea program.
-func RunTUI(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, regPath string) error {
-	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, warnings, regPath))
+func RunTUI(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) error {
+	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, warnings, options))
 	_, err := p.Run()
 	return err
 }

@@ -57,3 +57,29 @@ func TestComputeDiffNoChanges(t *testing.T) {
 		t.Errorf("expected no changes, got %+v", diff)
 	}
 }
+
+func TestComputeDiffKeepsSameNameAtDifferentPathsSeparate(t *testing.T) {
+	old := []model.Tool{{Name: "tool", Source: "path", Path: "/one/tool"}}
+	current := []model.Tool{{Name: "tool", Source: "path", Path: "/two/tool"}}
+
+	diff := ComputeDiff(old, current)
+	if len(diff.Added) != 1 || diff.Added[0].Path != "/two/tool" {
+		t.Errorf("expected the new path to be added, got %+v", diff.Added)
+	}
+	if len(diff.Removed) != 1 || diff.Removed[0].Path != "/one/tool" {
+		t.Errorf("expected the old path to be removed, got %+v", diff.Removed)
+	}
+}
+
+func TestComputeDiffKeepsSameNameAcrossSourcesSeparate(t *testing.T) {
+	old := []model.Tool{{Name: "tool", Source: model.SourceBrewFormula}}
+	current := []model.Tool{{Name: "tool", Source: model.SourceNPM}}
+
+	diff := ComputeDiff(old, current)
+	if len(diff.Added) != 1 || diff.Added[0].Source != model.SourceNPM {
+		t.Errorf("expected npm observation to be added, got %+v", diff.Added)
+	}
+	if len(diff.Removed) != 1 || diff.Removed[0].Source != model.SourceBrewFormula {
+		t.Errorf("expected brew observation to be removed, got %+v", diff.Removed)
+	}
+}

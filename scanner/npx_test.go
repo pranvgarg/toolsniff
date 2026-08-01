@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pranvgarg/toolsniff/model"
 )
 
 // makeNPXFixture builds a fake ~/.npm/_npx directory with one hash dir
@@ -32,7 +34,7 @@ func TestNPXScannerResolvesPackageFromBinSymlink(t *testing.T) {
 	makeNPXFixture(t, root, "hash2", "prisma", "@prisma/cli")
 
 	s := NewNPXScanner(root)
-	if s.Name() != "npx-history" {
+	if s.Name() != model.SourceNPXHistory {
 		t.Errorf("expected Name() == \"npx-history\", got %q", s.Name())
 	}
 
@@ -46,7 +48,7 @@ func TestNPXScannerResolvesPackageFromBinSymlink(t *testing.T) {
 	names := map[string]bool{}
 	for _, tool := range tools {
 		names[tool.Name] = true
-		if tool.Source != "npx-history" {
+		if tool.Source != model.SourceNPXHistory {
 			t.Errorf("expected Source == \"npx-history\", got %q", tool.Source)
 		}
 	}
