@@ -40,6 +40,8 @@ brews:
     repository:
       owner: pranvgarg
       name: homebrew-toolsniff
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: https://github.com/pranvgarg/toolsniff
     description: Discover installed developer and AI tools on macOS
