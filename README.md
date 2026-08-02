@@ -1,91 +1,143 @@
-```
-████████╗ ██████╗  ██████╗ ██╗         ███████╗███╗   ██╗██╗███████╗███████╗
-╚══██╔══╝██╔═══██╗██╔═══██╗██║         ██╔════╝████╗  ██║██║██╔════╝██╔════╝
-   ██║   ██║   ██║██║   ██║██║         ███████╗██╔██╗ ██║██║█████╗  █████╗
-   ██║   ██║   ██║██║   ██║██║         ╚════██║██║╚██╗██║██║██╔══╝  ██╔══╝
-   ██║   ╚██████╔╝╚██████╔╝███████╗    ███████║██║ ╚████║██║██║     ██║
-   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝    ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝
-```
-
 # toolsniff
 
-`toolsniff` discovers developer tools and AI applications installed or
-available on a macOS machine and presents them as one inventory. It scans
-package managers, application roots, Bun's global bin directory, and the
-user's `PATH`, then tracks changes against a saved baseline.
+**See every developer tool and AI app on your Mac in one place.**
 
-The inventory is discovery-based. It does not contain a compiled list of
-known AI tools. A new CLI or application is found automatically if it appears
-in one of the scanned locations.
+`toolsniff` is a macOS inventory tool for developer CLIs, AI tools, package
+manager installations, applications, and commands available on your `PATH`.
+It tells you:
 
-## What It Scans
+- What is installed.
+- Where it came from.
+- Whether a command is currently available.
+- What changed since your last inventory.
 
-The scanners run concurrently:
+It discovers tools instead of using a fixed list of “known” tools. If a new
+CLI appears in a supported location, toolsniff can find it automatically.
 
-- **npm global** — top-level packages reported by `npm ls -g`.
-- **npx history** — packages found in npm's npx cache. Informational only; it
-  is not treated as an installed tool or included in the baseline.
-- **Homebrew formulae** — packages reported by `brew list --formula`.
-- **Homebrew casks** — applications reported by `brew list --cask`.
-- **pipx** — isolated Python applications reported by `pipx list --json`.
-- **Cargo** — executable files in Cargo's bin directory.
-- **Bun** — executable files in the directory returned by `bun pm bin -g`.
-- **Applications** — every `.app` bundle under `/Applications` and
-  `~/Applications`, without keyword filtering. Application bundles are not
-  recursively inspected internally.
-- **PATH** — executable files in the directories in `$PATH`, excluding the
-  standard macOS system directories.
+![toolsniff TUI showing installed tools, available commands, sources, versions, and changes](docs/assets/toolsniff-tui.png)
 
-Sources are intentionally kept separate. If the same command is installed
-through Homebrew and npm, both observations remain visible. A PATH result is
-reported as an available command, not falsely presented as another package
-manager installation.
+## Why Use It?
+
+Developer machines accumulate tools from Homebrew, npm, pipx, Cargo, Bun,
+manual installs, and applications. Those tools are easy to forget and hard to
+audit.
+
+toolsniff gives you one readable inventory without pretending that every tool
+was installed the same way.
+
+```text
+Installed by Homebrew     gh  2.75.0
+Installed by npm          opencode-ai  1.18.11
+Available through PATH    gh  /opt/homebrew/bin/gh
+Changed since last scan   opencode-ai  1.18.10 -> 1.18.11
+```
+
+## Quick Start
+
+See a one-time inventory:
+
+```bash
+toolsniff --list
+```
+
+Open the interactive terminal interface:
+
+```bash
+toolsniff
+```
+
+Save the current installed inventory as a baseline:
+
+```bash
+toolsniff --save
+```
+
+Later, see installed tools that were added, removed, or updated:
+
+```bash
+toolsniff --diff
+```
+
+Include changes to commands found on `PATH`:
+
+```bash
+toolsniff --diff --available
+```
+
+The normal `--diff` command focuses on installations. PATH changes are
+opt-in because a command becoming available or unavailable is not proof that a
+package was installed or removed.
+
+## What It Finds
+
+| Source | What it represents |
+| --- | --- |
+| `npm` | Globally installed npm packages |
+| `brew-formula` | Homebrew command-line formulae |
+| `brew-cask` | Homebrew casks and GUI applications |
+| `pipx` | Isolated Python applications |
+| `cargo` | Executables in Cargo's bin directory |
+| `bun` | Executables in Bun's global bin directory |
+| `applications` | `.app` bundles in `/Applications` and `~/Applications` |
+| `path` | Executables currently available through `PATH` |
+| `npx-history` | Cached one-off npx usage, shown for information only |
+
+Different sources remain different observations. If `gh` exists in both
+Homebrew and npm, toolsniff shows both entries instead of guessing that they
+are the same installation.
 
 ## Install
 
-### Homebrew
+### Homebrew Formula
 
-Homebrew installation is available from the toolsniff tap:
+The formula is available from the custom toolsniff tap:
 
 ```bash
 brew tap pranvgarg/toolsniff
-# Homebrew 6 may require this once for a custom tap:
-brew trust pranvgarg/toolsniff
 brew install pranvgarg/toolsniff/toolsniff
 ```
 
-The formula is the preferred Homebrew installation. Releases provide a
-prebuilt macOS binary, and the formula can be served through a manually
-published Homebrew bottle. If the formula bottle is not usable on a particular
-Homebrew/macOS combination, the tap also provides a cask fallback:
+On newer Homebrew versions, a custom tap may also require trust:
 
 ```bash
+brew trust pranvgarg/toolsniff
+```
+
+If your Homebrew installation reports outdated Apple Command Line Tools, that
+is a Homebrew prerequisite problem. The toolsniff binary is prebuilt and does
+not compile from source during a normal release install.
+
+### Homebrew Cask Fallback
+
+Use the cask when the formula path is not usable on your Homebrew/macOS
+combination:
+
+```bash
+brew tap pranvgarg/toolsniff
 brew install --cask pranvgarg/toolsniff/toolsniff
 ```
 
-Choose either the formula or the cask, rather than installing both. The
-formula and cask are separate Homebrew installations and toolsniff will report
-them as separate sources.
+Install either the formula or the cask, not both. They are separate Homebrew
+installations.
 
 ### Direct Installer
 
-The release installer does not require Go or Homebrew. It detects Apple
-Silicon or Intel, downloads the matching GitHub release archive, verifies its
-SHA-256 checksum, and installs the binary at `~/.local/bin/toolsniff`:
+The direct installer does not require Go or Homebrew. It detects Apple Silicon
+or Intel, downloads the matching release archive, verifies its SHA-256
+checksum, and installs to `~/.local/bin/toolsniff`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pranvgarg/toolsniff/main/install.sh | sh
 ```
 
-For a checked-out repository, run the same installer directly:
+For a checked-out repository:
 
 ```bash
 ./install.sh
 ```
 
-Add `~/.local/bin` to `PATH` if the installer reports that it is not already
-there. Direct installations are not managed by Homebrew, so `toolsniff
---update` does not update them; rerun `install.sh` to install a newer release.
+Direct installations are not managed by Homebrew. Run the installer again to
+install a newer direct release.
 
 ### Build From Source
 
@@ -95,160 +147,101 @@ cd toolsniff
 go build -o toolsniff .
 ```
 
-The current release targets macOS and requires Go 1.26 or newer for source
-builds.
+Source builds currently require Go 1.26 or newer. The release binaries do not
+require Go.
 
-### Homebrew Troubleshooting
+## Update toolsniff
 
-The formula and cask install a prebuilt macOS binary. They do not compile
-toolsniff from source. Homebrew itself may require current Apple Command Line
-Tools, even for a prebuilt formula or cask.
+`toolsniff --update` updates **toolsniff itself** when toolsniff was installed
+by Homebrew. It does not update the other developer tools found by toolsniff.
 
-If Homebrew reports that the Command Line Tools are outdated:
-
-```bash
-xcode-select --install
-```
-
-If macOS reports that they are already installed but Homebrew still rejects
-them, update Command Line Tools through **System Settings > General > Software
-Update**. You can inspect the active developer tools path with:
-
-```bash
-xcode-select -p
-```
-
-After updating, refresh Homebrew and retry:
-
-```bash
-brew update
-brew install pranvgarg/toolsniff/toolsniff
-```
-
-Only if the installer remains stuck on an outdated standalone Command Line
-Tools installation should you reinstall it:
-
-```bash
-sudo rm -rf /Library/Developer/CommandLineTools
-xcode-select --install
-```
-
-These Command Line Tools requirements are Homebrew prerequisites, not a
-runtime requirement of the prebuilt toolsniff binary. If Homebrew cannot be
-made usable on the Mac, use the direct installer above instead.
-
-## Quick Start
-
-Run a one-time report first:
-
-```bash
-toolsniff --list
-```
-
-Save the current installed-tool inventory as your baseline:
-
-```bash
-toolsniff --save
-```
-
-Saving also records current PATH availability separately from installed tools.
-
-Later, check what was installed or removed:
-
-```bash
-toolsniff --diff
-```
-
-Include PATH availability changes when needed:
-
-```bash
-toolsniff --diff --available
-```
-
-Update a Homebrew installation when a newer release is available:
+Run it interactively:
 
 ```bash
 toolsniff --update
 ```
 
-This checks whether toolsniff was installed as a formula or cask, checks that
-source for an update, and asks for confirmation only when an update is
-available. Use `--yes` for a non-interactive confirmation:
+Use `--yes` for automation:
 
 ```bash
 toolsniff --update --yes
 ```
 
-Formula installations use `brew upgrade toolsniff`; cask installations use
-`brew upgrade --cask toolsniff`. If both the formula and cask are installed,
-the update is rejected as ambiguous. If toolsniff was installed directly or
-from source, these flags do not update it.
+The command detects whether toolsniff is a formula or cask and runs the
+matching Homebrew upgrade command. Direct and source installations are not
+updated by this command.
 
-Launch the interactive interface when you want to browse sources, filter
-results, or change the theme:
+## Common Commands
 
-```bash
-toolsniff
-```
+| Command | Purpose |
+| --- | --- |
+| `toolsniff` | Open the interactive TUI |
+| `toolsniff --list` | Print a grouped inventory and exit |
+| `toolsniff --json` | Print a machine-readable inventory |
+| `toolsniff --save` | Save installed and PATH baselines |
+| `toolsniff --diff` | Show installed additions, removals, and updates |
+| `toolsniff --diff --available` | Include PATH availability changes |
+| `toolsniff --update` | Update Homebrew-installed toolsniff |
+| `toolsniff --update --yes` | Update without prompting |
+| `toolsniff --version` | Print the toolsniff version |
+| `toolsniff --config FILE` | Use a specific TOML configuration file |
 
-The first scan may show warnings for package managers that are not installed.
-Those warnings do not prevent the other scanners from completing.
+Only one report or update mode should be selected at a time.
 
-## Usage
+## Understanding The Output
+
+### Installed
+
+An installed observation comes from a package manager, Cargo/Bun bin
+directory, or an application root. It is eligible for the installed baseline.
+
+### Available
+
+An available observation is an executable found on `PATH`. It tells you that a
+command can currently be run, not how it got there.
+
+### History
+
+History observations, such as npx cache entries, are informational. They do not
+enter the installed baseline and do not create installation-change alerts.
+
+### Updates
+
+If the same source and identity reports a different known version, toolsniff
+reports an update:
 
 ```text
-toolsniff                  # launch the interactive TUI
-toolsniff --list           # print a grouped table and exit
-toolsniff --json           # print a machine-readable report and exit
-toolsniff --save           # save the current installed observations
-toolsniff --diff           # show changes since the saved baseline
-toolsniff --update         # update a Homebrew-managed toolsniff installation
-toolsniff --update --yes   # update without prompting
-toolsniff --version        # print the installed release version
-toolsniff --config FILE    # use an explicit TOML configuration file
+UPDATED
+  ~ opencode-ai (npm) 1.18.10 -> 1.18.11
 ```
 
-Only one report mode can be selected at a time.
+A path change remains a removal plus an addition because the executable location
+is part of the observation identity.
 
 ## Configuration
 
-The default configuration file is:
+The optional configuration file is:
 
 ```text
 ~/.config/toolsniff/config.toml
 ```
 
-The file is optional. A default installation works without it. Configuration
-is for discovery policy and noise control, not for maintaining a list of tool
-names.
-
-Example:
+Use `--config` or environment variables for a different setup. A minimal
+example:
 
 ```toml
 [applications]
 roots = ["/Applications", "~/Applications"]
-ignore_paths = ["~/Applications/Old Tools"]
 
 [path]
 exclude_directories = ["/custom/system/bin"]
 ignore_names = ["internal-debug-tool"]
-
-[npx]
-dir = "~/.npm/_npx"
-
-[cargo]
-bin_dir = "~/.cargo/bin"
 
 [bun]
 enabled = true
 
 [theme]
 preset = "toolsniff"
-
-[theme.colors]
-# Optional overrides. Colors must use #RRGGBB values.
-# selection_background = "#7fd8c4"
-# selection_foreground = "#081018"
 
 [registry]
 path = "~/.toolsniff/registry.json"
@@ -257,144 +250,58 @@ path = "~/.toolsniff/registry.json"
 timeout = "8s"
 ```
 
-Configuration precedence is:
-
-1. Command-line flags
-2. `TOOLSNIFF_*` environment variables
-3. The TOML configuration file
-4. Platform-aware defaults
-
-Useful environment overrides include:
-
-```bash
-TOOLSNIFF_CONFIG=/tmp/toolsniff.toml toolsniff --list
-TOOLSNIFF_REGISTRY=/tmp/registry.json toolsniff --save
-TOOLSNIFF_EXEC_TIMEOUT=15s toolsniff --json
-```
-
-The scanner also respects standard environment values such as
-`NPM_CONFIG_CACHE`, `CARGO_HOME`, and `PATH`.
-
-### Themes
-
-The TUI includes built-in `toolsniff`, `midnight`, `nord`, `mono`, and
-`high-contrast` themes.
-
-Inside the TUI:
-
-- Press `?` to open the full help view, then use `t` to open the theme picker.
-- Press `t` directly to open the theme picker.
-- Type `/theme` and press `enter` to open it through the command prompt.
-- Use `↑` / `↓` or `j` / `k` to choose a theme.
-- Press `enter` to apply and persist it.
-- Press `esc` to cancel.
-
-The selected theme is saved to the configured TOML file. You can also select
-one before starting the TUI:
-
-```toml
-[theme]
-preset = "nord"
-```
-
-Individual selection colors can be overridden under `[theme.colors]` without
-changing the source code.
-
-## Output
-
-`--list` groups observations by source. Installed observations and PATH
-availability are counted separately:
-
-```text
-BREW-FORMULA (2)
-  jq                             1.7.1
-  ripgrep                        14.1.0
-
-PATH (1)
-  gh                             /opt/homebrew/bin/gh
-
-NPX HISTORY (1, informational)
-  create-vite                    2026-07-31
-
-2 installed tools and 1 available command across 2 sources
-```
-
-`--json` keeps installed tools and current PATH availability in separate
-collections and includes source role and path information when available:
-
-```json
-{
-  "tools": [
-    {
-      "name": "jq",
-      "source": "brew-formula",
-      "role": "installed",
-      "version": "1.7.1",
-      "path": ""
-    }
-  ],
-  "available": [
-    {
-      "name": "gh",
-      "source": "path",
-      "role": "available",
-      "version": "",
-      "path": "/opt/homebrew/bin/gh"
-    }
-  ],
-  "npx_history": [],
-  "added": [],
-  "removed": [],
-  "updated": [],
-  "available_added": [],
-  "available_removed": [],
-  "available_updated": [],
-  "warnings": []
-}
-```
-
-## Baseline and Diff
-
-Run `toolsniff --save` to create separate installed and PATH availability
-baselines. Later, `toolsniff --diff` reports installed observations that were
-added, removed, or updated. Use `toolsniff --diff --available` to include PATH
-availability changes. The installed registry is stored at
-`~/.toolsniff/registry.json` and the availability registry at
-`~/.toolsniff/availability.json` by default. The installed registry can be
-relocated through config or environment variables; the availability registry
-remains its sibling file.
-
-The registries keep different sources and executable paths separate. Installing
-the same package through two package managers is therefore represented as two
-real observations rather than one merged, ambiguous record.
-
-When an observation keeps the same source and identity but changes from one
-known version to another, the diff reports an update. Path changes remain a
-removal plus an addition.
-
-The baseline is intentionally separate from npx history. npx history records
-one-off cached executions and can change frequently, so it is shown for
-reference but does not create installation-change alerts.
+See [`docs/configuration.md`](docs/configuration.md) for all settings.
 
 ## TUI Controls
 
-- `↑` / `↓` — move through the active source
-- `←` / `→` / `tab` — switch source
-- `1`–`9` — jump to a source
-- `/` — filter the active source temporarily
-- `d` — jump to the new-observations tab
-- `s` — save the installed baseline
-- `t` — open the theme picker
-- `/theme` — open the theme picker through the command-style filter prompt
-- `?` — toggle help
-- `q` — quit
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` or `k` / `j` | Move through the active source |
+| `Left` / `Right` or `h` / `l` | Switch source |
+| `1`-`9` | Jump to a source |
+| `/` | Filter the active source |
+| `d` | Open the changes tab |
+| `s` | Save the installed baseline |
+| `t` | Open the theme picker |
+| `?` | Show all controls |
+| `q` | Quit |
 
-The theme picker applies a preset immediately and saves the selected preset to
-the configured TOML file. Use `↑` / `↓` to choose, `enter` to apply, and
-`esc` to cancel.
+## Troubleshooting Homebrew
+
+Check the active developer tools path:
+
+```bash
+xcode-select -p
+brew config
+```
+
+Check for available Apple updates:
+
+```bash
+softwareupdate --list
+```
+
+Install the exact Command Line Tools update shown by that command through
+Software Update. Only if the standalone installation is stuck should you
+remove and reinstall it:
+
+```bash
+sudo rm -rf /Library/Developer/CommandLineTools
+sudo xcode-select --install
+```
+
+If Homebrew cannot be made usable on the Mac, use the direct installer instead.
 
 ## Scope
 
-The current release targets macOS. Linux support will add platform-specific
-package-manager and application-root scanners without changing the scanner
-interface.
+toolsniff currently targets macOS. It is designed for a developer or AI-tool
+inventory, not for package updates, uninstallation, security scanning, or
+maintaining a curated list of tool names.
+
+## More Documentation
+
+- [`docs/configuration.md`](docs/configuration.md) — configuration reference.
+- [`docs/releasing.md`](docs/releasing.md) — release process.
+- [`docs/releasing-homebrew-bottles.md`](docs/releasing-homebrew-bottles.md) — formula bottle workflow.
+- [Homebrew tap](https://github.com/pranvgarg/homebrew-toolsniff)
+- [GitHub releases](https://github.com/pranvgarg/toolsniff/releases)
