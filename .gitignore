@@ -1,6 +1,7 @@
 /toolsniff
 /dist/
 /.serena/
+/docs/superpowers/plans/
 *.test
 *.out
 .DS_Store
