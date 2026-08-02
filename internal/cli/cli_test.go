@@ -1,11 +1,38 @@
-package main
+package cli
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/scanner"
 )
+
+func TestRunVersionUsesProvidedOutput(t *testing.T) {
+	var output, errorOutput bytes.Buffer
+
+	if code := Run([]string{"--version"}, strings.NewReader(""), &output, &errorOutput); code != 0 {
+		t.Fatalf("Run returned %d, want 0", code)
+	}
+	if got, want := output.String(), "dev\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if errorOutput.Len() != 0 {
+		t.Fatalf("unexpected error output: %q", errorOutput.String())
+	}
+}
+
+func TestRunRejectsMultipleReportModes(t *testing.T) {
+	var output, errorOutput bytes.Buffer
+
+	if code := Run([]string{"--list", "--json"}, strings.NewReader(""), &output, &errorOutput); code != 2 {
+		t.Fatalf("Run returned %d, want 2", code)
+	}
+	if got, want := errorOutput.String(), "only one of --list, --json, --save, --diff, or --update may be used\n"; got != want {
+		t.Fatalf("error output = %q, want %q", got, want)
+	}
+}
 
 func TestSplitByRole(t *testing.T) {
 	registrations := []scanner.Registration{
