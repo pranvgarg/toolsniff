@@ -2,6 +2,7 @@
 /dist/
 /.serena/
 /docs/superpowers/plans/
+/Next implementation markdown file/
 *.test
 *.out
 .DS_Store
