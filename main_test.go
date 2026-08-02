@@ -14,10 +14,11 @@ func TestSplitByRole(t *testing.T) {
 		{SourceInfo: scanner.SourceInfo{ID: model.SourceNPXHistory, Role: model.RoleHistory, Informational: true}},
 	}
 	tests := []struct {
-		name        string
-		input       []model.Tool
-		wantReal    []model.Tool
-		wantNPXHist []model.Tool
+		name           string
+		input          []model.Tool
+		wantInstalled  []model.Tool
+		wantAvailable  []model.Tool
+		wantNPXHistory []model.Tool
 	}{
 		{
 			name: "mix of npx-history and other sources",
@@ -27,11 +28,9 @@ func TestSplitByRole(t *testing.T) {
 				{Name: "wget", Source: model.SourcePath},
 				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
-			wantReal: []model.Tool{
-				{Name: "gh", Source: model.SourceBrewFormula},
-				{Name: "wget", Source: model.SourcePath},
-			},
-			wantNPXHist: []model.Tool{
+			wantInstalled: []model.Tool{{Name: "gh", Source: model.SourceBrewFormula}},
+			wantAvailable: []model.Tool{{Name: "wget", Source: model.SourcePath}},
+			wantNPXHistory: []model.Tool{
 				{Name: "create-react-app", Source: model.SourceNPXHistory},
 				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
@@ -42,11 +41,8 @@ func TestSplitByRole(t *testing.T) {
 				{Name: "gh", Source: "brew-formula"},
 				{Name: "wget", Source: "path"},
 			},
-			wantReal: []model.Tool{
-				{Name: "gh", Source: "brew-formula"},
-				{Name: "wget", Source: "path"},
-			},
-			wantNPXHist: nil,
+			wantInstalled: []model.Tool{{Name: "gh", Source: "brew-formula"}},
+			wantAvailable: []model.Tool{{Name: "wget", Source: "path"}},
 		},
 		{
 			name: "all npx-history",
@@ -54,31 +50,48 @@ func TestSplitByRole(t *testing.T) {
 				{Name: "create-react-app", Source: model.SourceNPXHistory},
 				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
-			wantReal: nil,
-			wantNPXHist: []model.Tool{
+			wantNPXHistory: []model.Tool{
 				{Name: "create-react-app", Source: model.SourceNPXHistory},
 				{Name: "cowsay", Source: model.SourceNPXHistory},
 			},
 		},
 		{
-			name:        "empty input",
-			input:       nil,
-			wantReal:    nil,
-			wantNPXHist: nil,
+			name: "empty input",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotReal, gotNPXHist := splitByRole(tt.input, registrations)
+			gotInstalled, gotAvailable, gotNPXHistory := splitByRole(tt.input, registrations)
 
-			if !toolsEqual(gotReal, tt.wantReal) {
-				t.Errorf("real = %+v, want %+v", gotReal, tt.wantReal)
+			if !toolsEqual(gotInstalled, tt.wantInstalled) {
+				t.Errorf("installed = %+v, want %+v", gotInstalled, tt.wantInstalled)
 			}
-			if !toolsEqual(gotNPXHist, tt.wantNPXHist) {
-				t.Errorf("npxHistory = %+v, want %+v", gotNPXHist, tt.wantNPXHist)
+			if !toolsEqual(gotAvailable, tt.wantAvailable) {
+				t.Errorf("available = %+v, want %+v", gotAvailable, tt.wantAvailable)
+			}
+			if !toolsEqual(gotNPXHistory, tt.wantNPXHistory) {
+				t.Errorf("npxHistory = %+v, want %+v", gotNPXHistory, tt.wantNPXHistory)
 			}
 		})
+	}
+}
+
+func TestValidateFlagsRequiresDiffForAvailability(t *testing.T) {
+	if err := validateFlags(true, false, false, false); err == nil {
+		t.Fatal("expected --available without --diff to be rejected")
+	}
+	if err := validateFlags(true, true, false, false); err != nil {
+		t.Fatalf("expected --available with --diff to be accepted: %v", err)
+	}
+	if err := validateFlags(false, false, true, false); err != nil {
+		t.Fatalf("expected --update to be accepted: %v", err)
+	}
+	if err := validateFlags(false, false, false, true); err == nil {
+		t.Fatal("expected --yes without --update to be rejected")
+	}
+	if err := validateFlags(false, false, false, false); err != nil {
+		t.Fatalf("expected ordinary mode to be accepted: %v", err)
 	}
 }
 

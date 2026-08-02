@@ -215,8 +215,9 @@ func (m tuiModel) renderFrame() string {
 		height = 24
 	}
 
-	installedTools, availableCommands := countToolRoles(m.realTools)
-	sourceCount := countSources(m.realTools)
+	currentTools := append(append([]model.Tool{}, m.realTools...), m.available...)
+	installedTools, availableCommands := countToolRoles(currentTools)
+	sourceCount := countSources(currentTools)
 	if installedTools == 0 && availableCommands == 0 {
 		// On a genuinely empty scan, tabs falls back to a ["npm"]
 		// placeholder so there's something to render, but that's not a

@@ -2,6 +2,9 @@ version: 2
 
 project_name: toolsniff
 
+env:
+  - CGO_ENABLED=0
+
 before:
   hooks:
     - go mod tidy
@@ -48,3 +51,16 @@ brews:
     license: MIT
     test: |
       system "#{bin}/toolsniff", "--version"
+
+homebrew_casks:
+  - name: toolsniff
+    repository:
+      owner: pranvgarg
+      name: homebrew-toolsniff
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/pranvgarg/toolsniff
+    description: Discover installed developer and AI tools on macOS
+    binaries:
+      - toolsniff

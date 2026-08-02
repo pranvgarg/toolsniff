@@ -52,3 +52,38 @@ func TestLoadCorruptFileReturnsEmptyWithWarning(t *testing.T) {
 		t.Error("expected a warning for a corrupt registry file")
 	}
 }
+
+func TestAvailabilityPathUsesSiblingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "registry.json")
+	want := filepath.Join(filepath.Dir(path), "availability.json")
+	if got := AvailabilityPath(path); got != want {
+		t.Fatalf("availability path = %q, want %q", got, want)
+	}
+}
+
+func TestAvailabilityRegistryIsIndependent(t *testing.T) {
+	dir := t.TempDir()
+	installedPath := filepath.Join(dir, "registry.json")
+	availablePath := AvailabilityPath(installedPath)
+	installed := []model.Tool{{Name: "gh", Source: model.SourceBrewFormula}}
+	available := []model.Tool{{Name: "gh", Source: model.SourcePath, Path: "/opt/homebrew/bin/gh"}}
+
+	if err := Save(installedPath, installed); err != nil {
+		t.Fatalf("saving installed registry: %v", err)
+	}
+	if err := Save(availablePath, available); err != nil {
+		t.Fatalf("saving availability registry: %v", err)
+	}
+
+	gotInstalled, installedWarning := Load(installedPath)
+	gotAvailable, availableWarning := Load(availablePath)
+	if installedWarning != "" || availableWarning != "" {
+		t.Fatalf("unexpected warnings: installed=%q available=%q", installedWarning, availableWarning)
+	}
+	if len(gotInstalled) != 1 || gotInstalled[0].Source != model.SourceBrewFormula {
+		t.Errorf("unexpected installed registry: %+v", gotInstalled)
+	}
+	if len(gotAvailable) != 1 || gotAvailable[0].Source != model.SourcePath {
+		t.Errorf("unexpected availability registry: %+v", gotAvailable)
+	}
+}

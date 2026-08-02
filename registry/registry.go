@@ -18,6 +18,16 @@ func DefaultRegistryPath() string {
 	return filepath.Join(home, ".toolsniff", "registry.json")
 }
 
+// AvailabilityPath returns the sibling registry used for PATH availability
+// observations. Keeping it separate prevents command availability from being
+// treated as proof of installation in the installed baseline.
+func AvailabilityPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "availability.json")
+}
+
 // Load reads the saved baseline. A missing file is not an error — it just
 // means there's no baseline yet, so every real install will show as new. A
 // corrupt file is treated the same way, but with a warning explaining why.

@@ -64,6 +64,20 @@ discovery. These are optional noise controls, not required tool inventories.
 reported global bin directory is used; toolsniff does not assume a fixed Bun
 installation path.
 
+The configured registry path stores installed observations. PATH availability
+is stored separately in a sibling `availability.json` file, so executable
+availability cannot become an installation claim. For example, the default
+files are:
+
+```text
+~/.toolsniff/registry.json
+~/.toolsniff/availability.json
+```
+
+`toolsniff --save` updates both files. `toolsniff --diff` compares installed
+observations, while `toolsniff --diff --available` also compares PATH
+availability.
+
 `theme.preset` controls the complete TUI palette. Available presets are
 `toolsniff`, `midnight`, `nord`, `mono`, and `high-contrast`. Individual
 semantic colors can override a preset without changing source code. The active

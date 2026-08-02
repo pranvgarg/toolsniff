@@ -10,9 +10,24 @@ import (
 type Diff struct {
 	Added   []model.Tool
 	Removed []model.Tool
+	Updated []ToolChange
+}
+
+// ToolChange records an observation whose identity remained stable while its
+// metadata changed.
+type ToolChange struct {
+	Before model.Tool `json:"before"`
+	After  model.Tool `json:"after"`
 }
 
 func toolKey(t model.Tool) string { return model.ToolIdentity(t) }
+
+func isVersionUpdate(before, after model.Tool) bool {
+	if before.Version == after.Version {
+		return false
+	}
+	return after.Version != ""
+}
 
 // ComputeDiff compares an old baseline against a new scan, keyed on
 // (Source, Path) when a path is available, otherwise (Source, Name), so two
@@ -28,9 +43,13 @@ func ComputeDiff(old, new []model.Tool) Diff {
 	}
 
 	var added, removed []model.Tool
+	var updated []ToolChange
 	for key, t := range newSet {
-		if _, ok := oldSet[key]; !ok {
+		before, ok := oldSet[key]
+		if !ok {
 			added = append(added, t)
+		} else if isVersionUpdate(before, t) {
+			updated = append(updated, ToolChange{Before: before, After: t})
 		}
 	}
 	for key, t := range oldSet {
@@ -49,5 +68,15 @@ func ComputeDiff(old, new []model.Tool) Diff {
 	}
 	sort.Slice(added, byBothKeys(added))
 	sort.Slice(removed, byBothKeys(removed))
-	return Diff{Added: added, Removed: removed}
+	sort.Slice(updated, func(i, j int) bool {
+		left, right := updated[i], updated[j]
+		if left.After.Source != right.After.Source {
+			return left.After.Source < right.After.Source
+		}
+		if left.After.Name != right.After.Name {
+			return left.After.Name < right.After.Name
+		}
+		return left.After.Path < right.After.Path
+	})
+	return Diff{Added: added, Removed: removed, Updated: updated}
 }

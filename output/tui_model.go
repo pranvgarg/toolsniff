@@ -47,6 +47,7 @@ type tuiModel struct {
 	filtering   bool
 	filterQuery string
 	realTools   []model.Tool
+	available   []model.Tool
 	regPath     string
 	statusMsg   string
 	configPath  string
@@ -165,19 +166,25 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	}
 }
 
-func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) tuiModel {
+func newTUIModel(realTools, available, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) tuiModel {
 	styles := NewThemeStyles(options.Theme)
 	toolsBySrc := map[string][]model.Tool{}
 	for _, t := range realTools {
+		toolsBySrc[t.Source] = append(toolsBySrc[t.Source], t)
+	}
+	for _, t := range available {
 		toolsBySrc[t.Source] = append(toolsBySrc[t.Source], t)
 	}
 	if len(npxHistory) > 0 {
 		toolsBySrc[model.SourceNPXHistory] = npxHistory
 	}
 
-	if len(diff.Added) > 0 || len(diff.Removed) > 0 {
+	if diffHasChanges(diff) {
 		newTab := append([]model.Tool{}, diff.Added...)
 		newTab = append(newTab, diff.Removed...)
+		for _, change := range diff.Updated {
+			newTab = append(newTab, change.After)
+		}
 		toolsBySrc[newTabID] = newTab
 	}
 
@@ -210,6 +217,7 @@ func newTUIModel(realTools, npxHistory []model.Tool, diff registry.Diff, warning
 		content:     t,
 		styles:      styles,
 		realTools:   realTools,
+		available:   available,
 		regPath:     options.RegistryPath,
 		warnings:    warnings,
 		version:     options.Version,
@@ -603,8 +611,8 @@ func (m tuiModel) View() tea.View {
 }
 
 // RunTUI launches the interactive Bubbletea program.
-func RunTUI(realTools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) error {
-	p := tea.NewProgram(newTUIModel(realTools, npxHistory, diff, warnings, options))
+func RunTUI(realTools, available, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) error {
+	p := tea.NewProgram(newTUIModel(realTools, available, npxHistory, diff, warnings, options))
 	_, err := p.Run()
 	return err
 }

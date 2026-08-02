@@ -28,10 +28,11 @@ func sortedSourceKeys(grouped map[string][]model.Tool) []string {
 }
 
 // RenderTable produces a plain grouped-by-source table for --list.
-func RenderTable(tools, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning) string {
+func RenderTable(tools, available, npxHistory []model.Tool, diff, availabilityDiff registry.Diff, warnings []scanner.Warning) string {
 	var b strings.Builder
 
-	grouped := groupBySource(tools)
+	currentTools := append(append([]model.Tool{}, tools...), available...)
+	grouped := groupBySource(currentTools)
 	sources := sortedSourceKeys(grouped)
 	for _, src := range sources {
 		fmt.Fprintf(&b, "%s (%d)\n", strings.ToUpper(src), len(grouped[src]))
@@ -53,9 +54,14 @@ func RenderTable(tools, npxHistory []model.Tool, diff registry.Diff, warnings []
 		b.WriteString("\n")
 	}
 
-	if len(diff.Added) > 0 || len(diff.Removed) > 0 {
+	if diffHasChanges(diff) {
 		b.WriteString("NEW SINCE LAST SCAN\n")
 		b.WriteString(RenderDiff(diff))
+		b.WriteString("\n")
+	}
+	if diffHasChanges(availabilityDiff) {
+		b.WriteString("AVAILABILITY CHANGES\n")
+		b.WriteString(RenderDiff(availabilityDiff))
 		b.WriteString("\n")
 	}
 
@@ -63,15 +69,15 @@ func RenderTable(tools, npxHistory []model.Tool, diff registry.Diff, warnings []
 		fmt.Fprintf(&b, "warning: %s: %v\n", w.Source, w.Err)
 	}
 
-	installed, available := countToolRoles(tools)
-	if available == 0 {
+	installed, availableCount := countToolRoles(currentTools)
+	if availableCount == 0 {
 		fmt.Fprintf(&b, "%d installed tools across %d sources\n", installed, len(sources))
 	} else {
 		label := "available command"
-		if available != 1 {
+		if availableCount != 1 {
 			label = "available commands"
 		}
-		fmt.Fprintf(&b, "%d installed tools and %d %s across %d sources\n", installed, available, label, len(sources))
+		fmt.Fprintf(&b, "%d installed tools and %d %s across %d sources\n", installed, availableCount, label, len(sources))
 	}
 	return b.String()
 }
@@ -98,10 +104,14 @@ func countSources(tools []model.Tool) int {
 	return len(sources)
 }
 
+func diffHasChanges(diff registry.Diff) bool {
+	return len(diff.Added) > 0 || len(diff.Removed) > 0 || len(diff.Updated) > 0
+}
+
 // RenderDiff renders just the added/removed tools, used by --diff and
 // embedded into RenderTable.
 func RenderDiff(diff registry.Diff) string {
-	if len(diff.Added) == 0 && len(diff.Removed) == 0 {
+	if !diffHasChanges(diff) {
 		return "no changes since last scan\n"
 	}
 	var b strings.Builder
@@ -110,6 +120,12 @@ func RenderDiff(diff registry.Diff) string {
 	}
 	for _, t := range diff.Removed {
 		fmt.Fprintf(&b, "  - %s (%s)\n", t.Name, t.Source)
+	}
+	if len(diff.Updated) > 0 {
+		b.WriteString("UPDATED\n")
+		for _, change := range diff.Updated {
+			fmt.Fprintf(&b, "  ~ %s (%s) %s -> %s\n", change.After.Name, change.After.Source, change.Before.Version, change.After.Version)
+		}
 	}
 	return b.String()
 }

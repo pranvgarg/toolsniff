@@ -69,7 +69,79 @@ git push origin v0.2.0
 
 The release workflow only accepts tags matching the semantic-version format.
 It then runs GoReleaser, which builds macOS Intel and Apple Silicon binaries,
-injects the version, publishes checksums, and creates the Homebrew formula.
+injects the version, publishes checksums, and creates the Homebrew formula and
+cask in the custom tap. The release workflow does not complete formula bottle
+publication; that remains a manual step described below.
+
+## Homebrew Formula Bottles
+
+The formula is the preferred Homebrew distribution. The tap also contains a
+cask as a fallback for Homebrew/macOS combinations where the formula bottle is
+not usable. GoReleaser publishes the release archives and generates the tap
+packaging, but it does not safely build, upload, and merge formula bottle
+metadata as one automated operation.
+
+After the GitHub release assets and generated formula exist, publish a formula
+bottle in this order:
+
+1. Check out or update the `homebrew-toolsniff` tap beside the toolsniff
+   checkout.
+2. Run the bottle helper against `Formula/toolsniff.rb`:
+
+   ```bash
+   scripts/build-homebrew-bottle.sh \
+     --tap ../homebrew-toolsniff \
+     --version 0.2.0 \
+     --output-dir dist/homebrew
+   ```
+
+   The helper validates the release URL, runs `brew install --build-bottle`,
+   runs `brew bottle --json`, and writes one `.bottle.tar.gz` plus one
+   `.bottle.json` to the output directory. It does not modify the tap.
+3. Upload the generated bottle archive to the matching GitHub release:
+
+   ```bash
+   gh release upload v0.2.0 dist/homebrew/*.bottle.tar.gz
+   ```
+
+4. Merge the generated JSON's bottle checksum data into
+   `Formula/toolsniff.rb`. The bottle block must use the same release asset
+   root URL and the checksums from the JSON.
+5. Review, commit, and push the formula change in the tap repository.
+6. Verify the formula installation from the tap. Use the cask path only as the
+   fallback installation:
+
+   ```bash
+   brew update
+   brew install pranvgarg/toolsniff/toolsniff
+   # Fallback:
+   brew install --cask pranvgarg/toolsniff/toolsniff
+   ```
+
+Do not use `brew bottle --write` or `brew bottle --merge` as part of this
+sequence. Building a bottle without uploading the archive and merging its
+metadata is not a complete Homebrew bottle release. See
+`docs/releasing-homebrew-bottles.md` for the helper's validation details.
+
+## Homebrew Compatibility
+
+The formula, cask, and `toolsniff --update` behavior depends on Homebrew, not
+on toolsniff's source-build requirements. Homebrew 6 may require
+`brew trust pranvgarg/toolsniff` for the custom tap; older Homebrew versions
+may not provide `brew trust`, in which case the command should be skipped.
+Homebrew can also reject a prebuilt formula or cask when Apple's Command Line
+Tools are outdated. That prerequisite must be repaired through Software
+Update; a formula bottle cannot bypass it.
+
+The direct `install.sh` path is the fallback when Homebrew is unavailable or
+its Command Line Tools prerequisites cannot be updated. It installs the
+matching release binary and verifies its checksum, but it is not a Homebrew
+installation and is therefore not managed by `toolsniff --update`.
+
+`toolsniff --update` detects whether the Homebrew installation is a formula or
+cask and runs the matching `brew upgrade` command. `toolsniff --update --yes`
+skips the confirmation prompt. Installing both forms is rejected as
+ambiguous; keep one Homebrew installation per machine.
 
 ## Initial `0.1.0` Release
 

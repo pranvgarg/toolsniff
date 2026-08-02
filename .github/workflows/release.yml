@@ -33,6 +33,29 @@ jobs:
             exit 1
           fi
 
+      - name: Test
+        run: go test ./...
+
+      - name: Race test
+        run: go test -race ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Validate installer scripts
+        run: |
+          sh -n install.sh
+          sh -n tests/install.sh
+
+      - name: Test installer integration
+        run: sh tests/install.sh
+
+      - name: Validate GoReleaser YAML
+        run: ruby -e 'require "yaml"; YAML.load_file(".goreleaser.yaml")'
+
       - name: Release
         uses: goreleaser/goreleaser-action@v6
         with:

@@ -51,8 +51,41 @@ Homebrew installation is available from the toolsniff tap:
 brew tap pranvgarg/toolsniff
 # Homebrew 6 may require this once for a custom tap:
 brew trust pranvgarg/toolsniff
-brew install toolsniff
+brew install pranvgarg/toolsniff/toolsniff
 ```
+
+The formula is the preferred Homebrew installation. Releases provide a
+prebuilt macOS binary, and the formula can be served through a manually
+published Homebrew bottle. If the formula bottle is not usable on a particular
+Homebrew/macOS combination, the tap also provides a cask fallback:
+
+```bash
+brew install --cask pranvgarg/toolsniff/toolsniff
+```
+
+Choose either the formula or the cask, rather than installing both. The
+formula and cask are separate Homebrew installations and toolsniff will report
+them as separate sources.
+
+### Direct Installer
+
+The release installer does not require Go or Homebrew. It detects Apple
+Silicon or Intel, downloads the matching GitHub release archive, verifies its
+SHA-256 checksum, and installs the binary at `~/.local/bin/toolsniff`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pranvgarg/toolsniff/main/install.sh | sh
+```
+
+For a checked-out repository, run the same installer directly:
+
+```bash
+./install.sh
+```
+
+Add `~/.local/bin` to `PATH` if the installer reports that it is not already
+there. Direct installations are not managed by Homebrew, so `toolsniff
+--update` does not update them; rerun `install.sh` to install a newer release.
 
 ### Build From Source
 
@@ -67,9 +100,9 @@ builds.
 
 ### Homebrew Troubleshooting
 
-The formula installs a prebuilt macOS binary. It does not compile toolsniff
-from source. Homebrew itself may require current Apple Command Line Tools,
-even for a prebuilt formula.
+The formula and cask install a prebuilt macOS binary. They do not compile
+toolsniff from source. Homebrew itself may require current Apple Command Line
+Tools, even for a prebuilt formula or cask.
 
 If Homebrew reports that the Command Line Tools are outdated:
 
@@ -89,7 +122,7 @@ After updating, refresh Homebrew and retry:
 
 ```bash
 brew update
-brew install toolsniff
+brew install pranvgarg/toolsniff/toolsniff
 ```
 
 Only if the installer remains stuck on an outdated standalone Command Line
@@ -99,6 +132,10 @@ Tools installation should you reinstall it:
 sudo rm -rf /Library/Developer/CommandLineTools
 xcode-select --install
 ```
+
+These Command Line Tools requirements are Homebrew prerequisites, not a
+runtime requirement of the prebuilt toolsniff binary. If Homebrew cannot be
+made usable on the Mac, use the direct installer above instead.
 
 ## Quick Start
 
@@ -114,11 +151,38 @@ Save the current installed-tool inventory as your baseline:
 toolsniff --save
 ```
 
+Saving also records current PATH availability separately from installed tools.
+
 Later, check what was installed or removed:
 
 ```bash
 toolsniff --diff
 ```
+
+Include PATH availability changes when needed:
+
+```bash
+toolsniff --diff --available
+```
+
+Update a Homebrew installation when a newer release is available:
+
+```bash
+toolsniff --update
+```
+
+This checks whether toolsniff was installed as a formula or cask, checks that
+source for an update, and asks for confirmation only when an update is
+available. Use `--yes` for a non-interactive confirmation:
+
+```bash
+toolsniff --update --yes
+```
+
+Formula installations use `brew upgrade toolsniff`; cask installations use
+`brew upgrade --cask toolsniff`. If both the formula and cask are installed,
+the update is rejected as ambiguous. If toolsniff was installed directly or
+from source, these flags do not update it.
 
 Launch the interactive interface when you want to browse sources, filter
 results, or change the theme:
@@ -138,6 +202,8 @@ toolsniff --list           # print a grouped table and exit
 toolsniff --json           # print a machine-readable report and exit
 toolsniff --save           # save the current installed observations
 toolsniff --diff           # show changes since the saved baseline
+toolsniff --update         # update a Homebrew-managed toolsniff installation
+toolsniff --update --yes   # update without prompting
 toolsniff --version        # print the installed release version
 toolsniff --config FILE    # use an explicit TOML configuration file
 ```
@@ -253,7 +319,8 @@ NPX HISTORY (1, informational)
 2 installed tools and 1 available command across 2 sources
 ```
 
-`--json` includes source role and path information when available:
+`--json` keeps installed tools and current PATH availability in separate
+collections and includes source role and path information when available:
 
 ```json
 {
@@ -264,7 +331,9 @@ NPX HISTORY (1, informational)
       "role": "installed",
       "version": "1.7.1",
       "path": ""
-    },
+    }
+  ],
+  "available": [
     {
       "name": "gh",
       "source": "path",
@@ -276,20 +345,32 @@ NPX HISTORY (1, informational)
   "npx_history": [],
   "added": [],
   "removed": [],
+  "updated": [],
+  "available_added": [],
+  "available_removed": [],
+  "available_updated": [],
   "warnings": []
 }
 ```
 
 ## Baseline and Diff
 
-Run `toolsniff --save` to create a baseline. Later, `toolsniff --diff` reports
-installed observations that were added or removed. The registry is stored at
-`~/.toolsniff/registry.json` by default and can be relocated through config or
-environment variables.
+Run `toolsniff --save` to create separate installed and PATH availability
+baselines. Later, `toolsniff --diff` reports installed observations that were
+added, removed, or updated. Use `toolsniff --diff --available` to include PATH
+availability changes. The installed registry is stored at
+`~/.toolsniff/registry.json` and the availability registry at
+`~/.toolsniff/availability.json` by default. The installed registry can be
+relocated through config or environment variables; the availability registry
+remains its sibling file.
 
-The registry keeps different sources and executable paths separate. Installing
+The registries keep different sources and executable paths separate. Installing
 the same package through two package managers is therefore represented as two
 real observations rather than one merged, ambiguous record.
+
+When an observation keeps the same source and identity but changes from one
+known version to another, the diff reports an update. Path changes remain a
+removal plus an addition.
 
 The baseline is intentionally separate from npx history. npx history records
 one-off cached executions and can change frequently, so it is shown for

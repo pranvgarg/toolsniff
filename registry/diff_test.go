@@ -53,8 +53,41 @@ func TestComputeDiffNoChanges(t *testing.T) {
 	tools := []model.Tool{{Name: "gh", Source: "brew-formula"}}
 	diff := ComputeDiff(tools, tools)
 
-	if len(diff.Added) != 0 || len(diff.Removed) != 0 {
+	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Updated) != 0 {
 		t.Errorf("expected no changes, got %+v", diff)
+	}
+}
+
+func TestComputeDiffReportsVersionUpgrade(t *testing.T) {
+	old := []model.Tool{{Name: "opencode-ai", Source: model.SourceNPM, Version: "1.18.10"}}
+	current := []model.Tool{{Name: "opencode-ai", Source: model.SourceNPM, Version: "1.19.0"}}
+
+	diff := ComputeDiff(old, current)
+	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Updated) != 1 {
+		t.Fatalf("expected one update, got %+v", diff)
+	}
+	if diff.Updated[0].Before.Version != "1.18.10" || diff.Updated[0].After.Version != "1.19.0" {
+		t.Errorf("unexpected version change: %+v", diff.Updated[0])
+	}
+}
+
+func TestComputeDiffReportsEmptyToKnownVersion(t *testing.T) {
+	old := []model.Tool{{Name: "tool", Source: model.SourceNPM}}
+	current := []model.Tool{{Name: "tool", Source: model.SourceNPM, Version: "1.0.0"}}
+
+	diff := ComputeDiff(old, current)
+	if len(diff.Updated) != 1 {
+		t.Fatalf("expected empty-to-known update, got %+v", diff)
+	}
+}
+
+func TestComputeDiffIgnoresKnownToEmptyVersion(t *testing.T) {
+	old := []model.Tool{{Name: "tool", Source: model.SourceNPM, Version: "1.0.0"}}
+	current := []model.Tool{{Name: "tool", Source: model.SourceNPM}}
+
+	diff := ComputeDiff(old, current)
+	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Updated) != 0 {
+		t.Fatalf("expected no noisy version change, got %+v", diff)
 	}
 }
 
