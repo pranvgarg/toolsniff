@@ -231,8 +231,8 @@ func (s *Service) detectInstallation() (Source, error) {
 		return "", err
 	}
 
-	hasFormula := strings.TrimSpace(string(formula)) != ""
-	hasCask := strings.TrimSpace(string(cask)) != ""
+	hasFormula := formulaErr == nil && strings.TrimSpace(string(formula)) != ""
+	hasCask := caskErr == nil && strings.TrimSpace(string(cask)) != ""
 	switch {
 	case hasFormula && hasCask:
 		return "", ErrAmbiguousInstallation

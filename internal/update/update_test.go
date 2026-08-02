@@ -85,6 +85,25 @@ func TestDetectInstallation(t *testing.T) {
 	}
 }
 
+func TestDetectInstallationIgnoresNotInstalledDiagnostics(t *testing.T) {
+	fake := &fakeRunner{responses: map[string]fakeCommand{
+		"brew --version":                {out: []byte("Homebrew 4.6.0\n")},
+		"brew list --formula toolsniff": {out: []byte("toolsniff\n")},
+		"brew list --cask toolsniff": {
+			out: []byte("find: /opt/homebrew/Caskroom/toolsniff: No such file or directory\n"),
+			err: errors.New("exit status 1"),
+		},
+	}}
+
+	source, err := NewService(fake.run).DetectInstallation()
+	if err != nil {
+		t.Fatalf("DetectInstallation() error = %v", err)
+	}
+	if source != SourceFormula {
+		t.Fatalf("source = %q, want %q", source, SourceFormula)
+	}
+}
+
 func TestCheckOutdatedIsSourceSpecific(t *testing.T) {
 	tests := []struct {
 		name     string
