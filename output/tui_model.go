@@ -67,6 +67,12 @@ type tuiModel struct {
 	splashPhase splashPhase
 	splashLines []string
 	splashTimer timer.Model
+
+	// report is set only for the v2 entry point. The surrounding model remains
+	// responsible for lifecycle, layout, chrome, and global key handling while
+	// the report model owns v2 filtering and selection state.
+	report         *reportTUIModel
+	reportWarnings []string
 }
 
 // TUIOptions contains runtime metadata needed by the TUI. Keeping it in one
@@ -386,7 +392,12 @@ func (m *tuiModel) resizeContent() {
 		if h < 1 {
 			h = 1
 		}
-		m.content.SetColumns(columnsFor(m.width))
+		if m.report != nil {
+			m.content.SetColumns(reportColumnsFor(m.width))
+			m.content.SetRows(reportTableRows(m.report.rows, m.width))
+		} else {
+			m.content.SetColumns(columnsFor(m.width))
+		}
 		m.content.SetWidth(m.width)
 		m.content.SetHeight(h)
 		return
@@ -394,7 +405,12 @@ func (m *tuiModel) resizeContent() {
 	m.help.SetWidth(m.width - 4)
 	sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
 	cWidth := contentPaneWidth(m.width, sbWidth)
-	m.content.SetColumns(columnsFor(cWidth))
+	if m.report != nil {
+		m.content.SetColumns(reportColumnsFor(cWidth))
+		m.content.SetRows(reportTableRows(m.report.rows, cWidth))
+	} else {
+		m.content.SetColumns(columnsFor(cWidth))
+	}
 	m.content.SetWidth(cWidth)
 	m.content.SetHeight(contentPaneHeight(m.height, footerRows))
 }
@@ -442,6 +458,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if m.splashPhase != splashDone {
 		return m.updateSplash(msg)
+	}
+
+	if m.report != nil {
+		return m.updateReport(msg)
 	}
 
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
@@ -557,6 +577,17 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // appended line) ensures it stays within the frame's fixed height budget
 // instead of scrolling off-screen.
 func (m tuiModel) footerHint() string {
+	if m.report != nil {
+		if m.report.filtering {
+			n := len(m.report.rows)
+			unit := "match"
+			if n != 1 {
+				unit = "matches"
+			}
+			return fmt.Sprintf("/%s — %d %s (esc clear · enter apply)", m.report.filterInput, n, unit)
+		}
+		return m.help.View(m.keys)
+	}
 	if m.filtering || m.filterQuery != "" {
 		n := len(m.content.Rows())
 		unit := "match"
@@ -581,6 +612,9 @@ func (m tuiModel) footerLines() []string {
 	for _, w := range m.warnings {
 		lines = append(lines, m.styles.Warning.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
 	}
+	for _, warning := range m.reportWarnings {
+		lines = append(lines, m.styles.Warning.Render("warning: "+warning))
+	}
 	if m.statusMsg != "" {
 		lines = append(lines, m.styles.Status.Render(m.statusMsg))
 	}
@@ -600,7 +634,11 @@ func (m tuiModel) View() tea.View {
 		body = m.renderThemePicker()
 	} else if m.width > 0 && m.width < compactWidthThreshold {
 		footer := strings.Join(m.footerLines(), "\n")
-		body = m.renderCompact() + "\n" + m.content.View() + "\n" + footer
+		content := m.content.View()
+		if m.report != nil {
+			content = strings.Join(m.reportContentLines(), "\n")
+		}
+		body = m.renderCompact() + "\n" + content + "\n" + footer
 	} else {
 		body = m.renderFrame()
 	}

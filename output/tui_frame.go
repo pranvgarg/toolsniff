@@ -215,15 +215,28 @@ func (m tuiModel) renderFrame() string {
 		height = 24
 	}
 
-	currentTools := append(append([]model.Tool{}, m.realTools...), m.available...)
-	installedTools, availableCommands := countToolRoles(currentTools)
-	sourceCount := countSources(currentTools)
-	if installedTools == 0 && availableCommands == 0 {
-		// On a genuinely empty scan, tabs falls back to a ["npm"]
-		// placeholder so there's something to render, but that's not a
-		// real source: report 0, matching --list's "0 tools across 0
-		// sources" convention for an empty machine.
-		sourceCount = 0
+	var installedTools, availableCommands, sourceCount int
+	if m.report != nil {
+		installedTools = len(m.report.report.Installed)
+		availableCommands = len(m.report.report.Available)
+		seenSources := make(map[string]struct{})
+		for _, observation := range m.report.report.AllObservations() {
+			if observation.Role != model.RoleHistory {
+				seenSources[ObservationSource(observation)] = struct{}{}
+			}
+		}
+		sourceCount = len(seenSources)
+	} else {
+		currentTools := append(append([]model.Tool{}, m.realTools...), m.available...)
+		installedTools, availableCommands = countToolRoles(currentTools)
+		sourceCount = countSources(currentTools)
+		if installedTools == 0 && availableCommands == 0 {
+			// On a genuinely empty scan, tabs falls back to a ["npm"]
+			// placeholder so there's something to render, but that's not a
+			// real source: report 0, matching --list's "0 tools across 0
+			// sources" convention for an empty machine.
+			sourceCount = 0
+		}
 	}
 	stats := fmt.Sprintf("%d installed · %d available · %d sources", installedTools, availableCommands, sourceCount)
 
@@ -237,6 +250,9 @@ func (m tuiModel) renderFrame() string {
 
 	sidebarLines := renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount, m.styles)
 	contentLines := strings.Split(m.content.View(), "\n")
+	if m.report != nil {
+		contentLines = m.reportContentLines()
+	}
 
 	rows := make([]string, rowCount)
 	for i := 0; i < rowCount; i++ {

@@ -2,8 +2,10 @@ package output
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/registry"
 )
@@ -61,6 +63,70 @@ func TestReportTUISupportsSearchDetailsAndEsc(t *testing.T) {
 	if _, ok := m.selectedObservation(); !ok {
 		t.Fatal("selected observation missing")
 	}
+}
+
+func TestObservationTUIUsesExistingShellChromeForV2Report(t *testing.T) {
+	tool := observation("npm-tool", model.RoleInstalled, model.KindPackage, model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	m := newObservationTUIModel(NewObservationReport([]model.Observation{tool}, nil, nil, emptyObservationDiff(), []string{"scanner: warning"}), TUIOptions{Version: "1.2.3"})
+	m.splashPhase = splashDone
+	m.width, m.height = 100, 30
+	m.resizeContent()
+
+	view := m.View()
+	for _, want := range []string{"◆ toolsniff", "all", "installed", "npm-tool", "warning: scanner: warning"} {
+		if !strings.Contains(view.Content, want) {
+			t.Errorf("v2 shell view missing %q: %s", want, view.Content)
+		}
+	}
+	if !view.AltScreen {
+		t.Fatal("v2 shell did not enable the alternate screen")
+	}
+}
+
+func TestObservationTUIKeepsV2InteractionsInsideShell(t *testing.T) {
+	tool := observation("npm-tool", model.RoleInstalled, model.KindPackage, model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	m := newObservationTUIModel(NewObservationReport([]model.Observation{tool}, nil, nil, emptyObservationDiff(), nil), TUIOptions{})
+	m.splashPhase = splashDone
+	m.width, m.height = 100, 30
+	m.resizeContent()
+
+	m.Update(testKey("/"))
+	m.Update(testKey("npm"))
+	m.Update(testKeyCode(tea.KeyEnter))
+	if m.report.filtering || m.report.state.Text != "npm" {
+		t.Fatalf("v2 filter state was not retained: filtering=%v state=%+v", m.report.filtering, m.report.state)
+	}
+	m.Update(testKey("esc"))
+	if m.report.filtering {
+		t.Fatal("escape did not leave v2 filtering")
+	}
+	m.Update(testKeyCode(tea.KeyEnter))
+	if m.report.detail == nil {
+		t.Fatal("enter did not open v2 detail view")
+	}
+	m.Update(testKey("esc"))
+	if m.report.detail != nil {
+		t.Fatal("escape did not close v2 detail view")
+	}
+
+	_, quit := m.Update(testKey("q"))
+	if quit == nil {
+		t.Fatal("q did not return a quit command")
+	}
+}
+
+func testKey(text string) tea.KeyPressMsg {
+	switch text {
+	case "enter":
+		return testKeyCode(tea.KeyEnter)
+	case "esc":
+		return testKeyCode(tea.KeyEscape)
+	}
+	return tea.KeyPressMsg(tea.Key{Text: text, Code: []rune(text)[0]})
+}
+
+func testKeyCode(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: code})
 }
 
 func emptyObservationDiff() (diff registry.ObservationDiff) {

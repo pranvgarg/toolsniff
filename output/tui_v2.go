@@ -4,14 +4,17 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/pranvgarg/toolsniff/model"
+	"github.com/pranvgarg/toolsniff/registry"
 )
 
-// reportTUIModel is deliberately separate from tuiModel. This lets the
-// existing source-tab TUI and its public RunTUI entry point remain stable
-// while the CLI migration adopts the v2 report later.
+// reportTUIModel contains only v2 report interaction state. It is hosted by
+// tuiModel for the application entry point so the established shell remains
+// the owner of lifecycle, layout, and chrome.
 type reportTUIModel struct {
 	report      ObservationReport
 	state       FilterState
@@ -28,7 +31,7 @@ type reportTUIModel struct {
 
 // NewObservationTUIModel creates an additive report-backed Bubble Tea model.
 func NewObservationTUIModel(report ObservationReport) tea.Model {
-	model := newReportTUIModel(report)
+	model := newObservationTUIModel(report, TUIOptions{})
 	return &model
 }
 
@@ -44,12 +47,214 @@ func newReportTUIModel(report ObservationReport) reportTUIModel {
 	return model
 }
 
+var reportTabs = []string{"all", "installed", "available", "history", "changes", "issues"}
+
+// newObservationTUIModel puts the v2 state inside the established TUI shell.
+// Keeping construction here makes the additive report model usable on its own
+// in tests and by adapters while the application gets the full TUI chrome.
+func newObservationTUIModel(report ObservationReport, options TUIOptions) tuiModel {
+	shell := newTUIModel(nil, nil, nil, registry.Diff{}, nil, options)
+	state := newReportTUIModel(report)
+	shell.report = &state
+	shell.reportWarnings = append([]string(nil), report.Warnings...)
+	shell.tabs = append([]string(nil), reportTabs...)
+	shell.toolsBySrc = reportSidebarCounts(report)
+	shell.activeTab = reportTabIndex(state.state.View)
+	shell.content.SetRows(reportTableRows(state.rows, 0))
+	shell.content.SetColumns(reportColumnsFor(0))
+	shell.syncReportShell()
+	return shell
+}
+
 // RunObservationTUI launches the v2 report TUI without changing RunTUI.
-func RunObservationTUI(report ObservationReport, _ TUIOptions) error {
-	model := newReportTUIModel(report)
+func RunObservationTUI(report ObservationReport, options TUIOptions) error {
+	model := newObservationTUIModel(report, options)
 	program := tea.NewProgram(&model)
 	_, err := program.Run()
 	return err
+}
+
+func reportSidebarCounts(report ObservationReport) map[string][]model.Tool {
+	counts := map[string]int{
+		"all":       len(report.AllObservations()),
+		"installed": len(report.Installed),
+		"available": len(report.Available),
+		"history":   len(report.History),
+		"changes":   len(report.Changes.Events()),
+		"issues":    len(report.Changes.Broken) + len(report.Changes.Shadowed),
+	}
+	result := make(map[string][]model.Tool, len(counts))
+	for tab, count := range counts {
+		result[tab] = make([]model.Tool, count)
+	}
+	return result
+}
+
+func reportTabIndex(view ViewCategory) int {
+	for index, tab := range reportTabs {
+		if tab == string(view) {
+			return index
+		}
+	}
+	return 0
+}
+
+func reportViewForTab(index int) ViewCategory {
+	if index < 0 || index >= len(reportTabs) {
+		return ViewAll
+	}
+	return ViewCategory(reportTabs[index])
+}
+
+func reportColumnsFor(width int) []table.Column {
+	if width <= 0 {
+		width = 80
+	}
+	nameWidth := width - contentVersionColWidth - 4
+	if nameWidth < 4 {
+		nameWidth = 4
+	}
+	switch {
+	case width < 45:
+		return []table.Column{{Title: "Name", Width: nameWidth}, {Title: "Version", Width: contentVersionColWidth}}
+	case width < 75:
+		statusWidth := 12
+		nameWidth = width - contentVersionColWidth - statusWidth - 8
+		if nameWidth < 4 {
+			nameWidth = 4
+		}
+		return []table.Column{
+			{Title: "Name", Width: nameWidth},
+			{Title: "Version", Width: contentVersionColWidth},
+			{Title: "Status", Width: statusWidth},
+		}
+	default:
+		statusWidth, sourceWidth := 12, 16
+		nameWidth = width - contentVersionColWidth - statusWidth - sourceWidth - 10
+		if nameWidth < 4 {
+			nameWidth = 4
+		}
+		return []table.Column{
+			{Title: "Name", Width: nameWidth},
+			{Title: "Version", Width: contentVersionColWidth},
+			{Title: "Status", Width: statusWidth},
+			{Title: "Source", Width: sourceWidth},
+		}
+	}
+}
+
+func reportTableRows(rows []InventoryRow, width int) []table.Row {
+	result := make([]table.Row, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, table.Row(ResponsiveRowData(row, width)))
+	}
+	return result
+}
+
+func (m tuiModel) reportLayoutWidth() int {
+	if m.width > 0 && m.width < compactWidthThreshold {
+		return m.width
+	}
+	return contentPaneWidth(m.width, sidebarWidth(m.tabs, m.toolsBySrc))
+}
+
+func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		keyName := keyMsg.String()
+		m.statusMsg = ""
+
+		// Quit remains a shell concern so it works from every v2 overlay.
+		if keyName == "ctrl+c" || keyName == "q" {
+			return m, tea.Quit
+		}
+
+		overlayOpen := m.report.filtering || m.report.drawer.Open
+		if !overlayOpen {
+			switch {
+			case key.Matches(keyMsg, m.keys.Theme):
+				m.openThemePicker()
+				return m, nil
+			case key.Matches(keyMsg, m.keys.Help):
+				m.help.ShowAll = !m.help.ShowAll
+				m.resizeContent()
+				return m, nil
+			case key.Matches(keyMsg, m.keys.Save):
+				if err := registry.SaveObservations(m.regPath, m.report.report.Installed); err != nil {
+					m.statusMsg = "save failed: " + err.Error()
+				} else if err := registry.SaveObservations(registry.AvailabilityPath(m.regPath), m.report.report.Available); err != nil {
+					m.statusMsg = "save failed: " + err.Error()
+				} else {
+					m.statusMsg = fmt.Sprintf("saved baseline: %d installed, %d available", len(m.report.report.Installed), len(m.report.report.Available))
+				}
+				m.report.status = m.statusMsg
+				m.syncReportShell()
+				m.resizeContent()
+				return m, nil
+			case key.Matches(keyMsg, m.keys.NextTab):
+				m.report.state.View = reportViewForTab((reportTabIndex(m.report.state.View) + 1) % len(reportTabs))
+				m.report.drawer.State = m.report.state
+				m.report.rebuildRows()
+				m.syncReportShell()
+				return m, nil
+			case key.Matches(keyMsg, m.keys.PrevTab):
+				index := (reportTabIndex(m.report.state.View) - 1 + len(reportTabs)) % len(reportTabs)
+				m.report.state.View = reportViewForTab(index)
+				m.report.drawer.State = m.report.state
+				m.report.rebuildRows()
+				m.syncReportShell()
+				return m, nil
+			case key.Matches(keyMsg, m.keys.JumpTab):
+				if index := int(keyName[0] - '1'); index >= 0 && index < len(reportTabs) {
+					m.report.state.View = reportViewForTab(index)
+					m.report.drawer.State = m.report.state
+					m.report.rebuildRows()
+					m.syncReportShell()
+				}
+				return m, nil
+			}
+		}
+	}
+
+	updated, cmd := m.report.Update(msg)
+	if reportModel, ok := updated.(*reportTUIModel); ok {
+		m.report = reportModel
+	}
+	m.syncReportShell()
+	m.resizeContent()
+	return m, cmd
+}
+
+func (m *tuiModel) syncReportShell() {
+	if m.report == nil {
+		return
+	}
+	m.activeTab = reportTabIndex(m.report.state.View)
+	m.statusMsg = m.report.status
+	m.content.SetRows(reportTableRows(m.report.rows, m.reportLayoutWidth()))
+	m.content.SetCursor(m.report.selected)
+}
+
+func (m tuiModel) reportContentLines() []string {
+	if m.report.detail != nil {
+		return strings.Split(RenderDetailView(*m.report.detail), "\n")
+	}
+	if m.report.drawer.Open {
+		return strings.Split(m.report.drawer.View(), "\n")
+	}
+	lines := []string{}
+	if m.report.filtering {
+		lines = append(lines, "Filter: "+m.report.filterInput)
+	} else {
+		lines = append(lines, FilterSummary(m.report.state, len(m.report.rows)))
+	}
+	if len(m.report.rows) == 0 {
+		lines = append(lines, EmptyResultMessage(m.report.state, 0))
+	} else if m.report.state.View == ViewChanges || m.report.state.View == ViewIssues {
+		lines = append(lines, RenderChangeReport(m.report.report.Changes))
+	} else {
+		lines = append(lines, strings.Split(m.content.View(), "\n")...)
+	}
+	return lines
 }
 
 func (m *reportTUIModel) Init() tea.Cmd { return nil }
