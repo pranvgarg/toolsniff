@@ -1,10 +1,104 @@
 package scanner
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pranvgarg/toolsniff/model"
 )
+
+func applicationFixture(t *testing.T, name string) string {
+	t.Helper()
+	return filepath.Join("testdata", "applications", name, "Example.app")
+}
+
+func TestReadApplicationInfoFixtures(t *testing.T) {
+	tests := []struct {
+		name string
+		want model.ApplicationInfo
+	}{
+		{
+			name: "valid",
+			want: model.ApplicationInfo{
+				BundleID:       "com.example.fixture",
+				DisplayVersion: "Fixture 4.2",
+				ShortVersion:   "4.2.1",
+				MinimumOS:      "13.0",
+				Architectures:  []string{"arm64", "x86_64"},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := readApplicationInfo(applicationFixture(t, test.name))
+			if err != nil {
+				t.Fatalf("readApplicationInfo: %v", err)
+			}
+			if got.BundleID != test.want.BundleID || got.DisplayVersion != test.want.DisplayVersion || got.ShortVersion != test.want.ShortVersion || got.MinimumOS != test.want.MinimumOS {
+				t.Fatalf("unexpected application metadata: %+v", got)
+			}
+			if len(got.Architectures) != len(test.want.Architectures) {
+				t.Fatalf("unexpected architectures: %+v", got.Architectures)
+			}
+			for i := range test.want.Architectures {
+				if got.Architectures[i] != test.want.Architectures[i] {
+					t.Errorf("architecture %d = %q, want %q", i, got.Architectures[i], test.want.Architectures[i])
+				}
+			}
+		})
+	}
+}
+
+func TestReadApplicationInfoMissingMetadata(t *testing.T) {
+	_, err := readApplicationInfo(applicationFixture(t, "missing"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected missing Info.plist error, got %v", err)
+	}
+}
+
+func TestReadApplicationInfoMalformedMetadata(t *testing.T) {
+	_, err := readApplicationInfo(applicationFixture(t, "malformed"))
+	if err == nil {
+		t.Fatal("expected malformed Info.plist error")
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected parse error, got missing file error: %v", err)
+	}
+}
+
+func TestReadApplicationInfoDoesNotInspectNestedBundles(t *testing.T) {
+	bundle := applicationFixture(t, "nested")
+	got, err := readApplicationInfo(bundle)
+	if err != nil {
+		t.Fatalf("readApplicationInfo: %v", err)
+	}
+	if got.BundleID != "com.example.outer" {
+		t.Fatalf("expected outer bundle metadata, got %+v", got)
+	}
+
+	tools, err := NewApplicationsScanner([]string{filepath.Dir(bundle)}, nil).Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Path != bundle {
+		t.Fatalf("expected only outer bundle, got %+v", tools)
+	}
+}
+
+func TestApplicationsScannerDeduplicatesFixtureBundles(t *testing.T) {
+	root := filepath.Dir(applicationFixture(t, "duplicate"))
+	tools, err := NewApplicationsScanner([]string{root, root}, nil).Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(tools) != 1 || tools[0].Name != "Example.app" {
+		t.Fatalf("expected one duplicate bundle, got %+v", tools)
+	}
+}
 
 func TestApplicationsScannerDiscoversBundlesWithoutKeywords(t *testing.T) {
 	root := t.TempDir()

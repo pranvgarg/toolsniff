@@ -68,6 +68,22 @@ The normal `--diff` command focuses on installations. PATH changes are
 opt-in because a command becoming available or unavailable is not proof that a
 package was installed or removed.
 
+Create a read-only health report:
+
+```bash
+toolsniff --doctor
+```
+
+Save and review point-in-time inventories:
+
+```bash
+toolsniff --snapshot
+toolsniff --snapshots
+```
+
+Exports, comparisons, support bundles, and capability reports are described in
+the [command reference](docs/configuration.md).
+
 ## What It Finds
 
 | Source | What it represents |
@@ -181,6 +197,14 @@ updated by this command.
 | `toolsniff --save` | Save installed and PATH baselines |
 | `toolsniff --diff` | Show installed additions, removals, and updates |
 | `toolsniff --diff --available` | Include PATH availability changes |
+| `toolsniff --doctor` | Print read-only health and provenance findings |
+| `toolsniff --snapshot` | Save a non-history snapshot |
+| `toolsniff --snapshots` | List saved snapshots without scanning |
+| `toolsniff --export-profile FILE` | Write a sanitized profile |
+| `toolsniff --compare-profile FILE` | Compare the current scan with a profile |
+| `toolsniff --support-bundle FILE` | Write a sanitized support bundle |
+| `toolsniff --capabilities` | Print explicit capability results as JSON |
+| `toolsniff --capabilities --capabilities-probe` | Add bounded version probes |
 | `toolsniff --update` | Update Homebrew-installed toolsniff |
 | `toolsniff --update --yes` | Update without prompting |
 | `toolsniff --version` | Print the toolsniff version |
@@ -189,6 +213,19 @@ updated by this command.
 Only one report or update mode should be selected at a time.
 
 ## Understanding The Output
+
+### v2 observations
+
+The current report uses schema version 2. Each result is an observation with a
+stable identity, kind, evidence-backed origin, typed locations, availability,
+and optional package, application, or history metadata. A PATH observation
+means that a command is available; it does not prove how the command was
+installed.
+
+Version values are stateful. The list displays `known`, `unknown`, `n/a`, or
+`not reported` semantics instead of putting a path in a Version column. See
+[`docs/observation-model-v2.md`](docs/observation-model-v2.md) for the JSON
+contract, change events, and migration rules.
 
 ### Installed
 
@@ -205,18 +242,19 @@ command can currently be run, not how it got there.
 History observations, such as npx cache entries, are informational. They do not
 enter the installed baseline and do not create installation-change alerts.
 
-### Updates
+### Changes
 
-If the same source and identity reports a different known version, toolsniff
-reports an update:
+The v2 diff keeps typed events for additions, removals, updates, relocations,
+broken locations, repairs, and newly shadowed commands. If the same stable
+identity reports a different known version, toolsniff reports an update:
 
 ```text
 UPDATED
   ~ opencode-ai (npm) 1.18.10 -> 1.18.11
 ```
 
-A path change remains a removal plus an addition because the executable location
-is part of the observation identity.
+A package or application path change can be a relocation because location and
+identity are separate in v2. Unknown and not-reported versions are not guessed.
 
 ## Configuration
 
@@ -256,15 +294,38 @@ See [`docs/configuration.md`](docs/configuration.md) for all settings.
 
 | Key | Action |
 | --- | --- |
-| `Up` / `Down` or `k` / `j` | Move through the active source |
-| `Left` / `Right` or `h` / `l` | Switch source |
-| `1`-`9` | Jump to a source |
-| `/` | Filter the active source |
-| `d` | Open the changes tab |
-| `s` | Save the installed baseline |
-| `t` | Open the theme picker |
-| `?` | Show all controls |
-| `q` | Quit |
+| `Up` / `Down` or `k` / `j` | Move through the current view |
+| `a` | Show all observations |
+| `d` | Show typed changes |
+| `i` | Show diagnostic issues |
+| `/` | Search and enter optional facet filters |
+| `f` | Open the filter drawer |
+| `Enter` | Open read-only details for the selected observation |
+| `Esc` | Close details, cancel a filter, or clear filters |
+| `p` | Prepare the selected location path for copying |
+| `c` | Prepare the selected observation JSON for copying |
+| `o` | Prepare an `open -R` command for the selected location |
+| `q` / `Ctrl-C` | Quit |
+
+The filter drawer supports plain text plus ANDed facets such as
+`source:npm`, `kind:application`, `version:unknown`, `status:updated`, and
+`view:history`. Empty results explain the active filters. The detail view
+keeps locations, availability, evidence, and optional metadata out of the
+compact table.
+
+## Privacy
+
+Normal scans and local JSON reports retain local paths needed for inventory.
+Profile exports and support bundles are sanitized: home-directory prefixes are
+shown as `$HOME`, likely secret values are redacted, probe payloads and raw
+evidence are omitted, and location hashes are not exported. Capability matching
+uses explicit metadata or evidence, not display-name guesses. Executable
+version probing is opt-in and bounded; `--capabilities` does not probe unless
+`--capabilities-probe` is also supplied.
+
+Existing v1 registry arrays are read and migrated to the v2 envelope without
+discarding observations. The files are rewritten as v2 only by a successful
+baseline save, and installed and PATH availability baselines remain separate.
 
 ## Troubleshooting Homebrew
 
@@ -302,6 +363,8 @@ maintaining a curated list of tool names.
 
 - [`docs/configuration.md`](docs/configuration.md) — configuration reference.
 - [`docs/releasing.md`](docs/releasing.md) — release process.
+- [`docs/observation-model-v2.md`](docs/observation-model-v2.md) — v2 schema,
+  migration, exports, diagnostics, capabilities, and TUI behavior.
 - [`docs/releasing-homebrew-bottles.md`](docs/releasing-homebrew-bottles.md) — formula bottle workflow.
 - [Homebrew tap](https://github.com/pranvgarg/homebrew-toolsniff)
 - [GitHub releases](https://github.com/pranvgarg/toolsniff/releases)

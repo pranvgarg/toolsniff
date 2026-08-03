@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pranvgarg/toolsniff/registry"
 )
 
 func TestCLISeparatesInstalledAndAvailabilityBaselines(t *testing.T) {
@@ -66,9 +69,23 @@ func TestCLISeparatesInstalledAndAvailabilityBaselines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading installed registry: %v", err)
 	}
+	var installedEnvelope registry.Envelope
+	if err := json.Unmarshal(installedData, &installedEnvelope); err != nil {
+		t.Fatalf("installed registry is not a v2 envelope: %v", err)
+	}
+	if installedEnvelope.SchemaVersion != registry.CurrentSchemaVersion {
+		t.Fatalf("installed registry schema version = %d, want %d", installedEnvelope.SchemaVersion, registry.CurrentSchemaVersion)
+	}
 	availabilityData, err := os.ReadFile(filepath.Join(root, "availability.json"))
 	if err != nil {
 		t.Fatalf("reading availability registry: %v", err)
+	}
+	var availabilityEnvelope registry.Envelope
+	if err := json.Unmarshal(availabilityData, &availabilityEnvelope); err != nil {
+		t.Fatalf("availability registry is not a v2 envelope: %v", err)
+	}
+	if availabilityEnvelope.SchemaVersion != registry.CurrentSchemaVersion {
+		t.Fatalf("availability registry schema version = %d, want %d", availabilityEnvelope.SchemaVersion, registry.CurrentSchemaVersion)
 	}
 	if strings.Contains(string(installedData), "tool-a") {
 		t.Fatalf("PATH tool leaked into installed registry: %s", installedData)
@@ -87,8 +104,10 @@ func TestCLISeparatesInstalledAndAvailabilityBaselines(t *testing.T) {
 	diff := run("--config", configPath, "--diff", "--available")
 	for _, want := range []string{
 		"AVAILABILITY CHANGES",
-		"+ tool-b (path)",
-		"- tool-a (path)",
+		"ADDED",
+		"  tool-b",
+		"REMOVED",
+		"  tool-a",
 	} {
 		if !strings.Contains(diff, want) {
 			t.Errorf("availability diff missing %q:\n%s", want, diff)

@@ -46,6 +46,10 @@ func defaultDirReader(path string) ([]os.DirEntry, error) { return os.ReadDir(pa
 
 func defaultFileStat(path string) (os.FileInfo, error) { return os.Stat(path) }
 
+func defaultFileLstat(path string) (os.FileInfo, error) { return os.Lstat(path) }
+
+func defaultReadlink(path string) (string, error) { return os.Readlink(path) }
+
 func isPathExcluded(path string, excluded []string) bool {
 	path = filepath.Clean(path)
 	for _, root := range excluded {

@@ -6,14 +6,20 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/pranvgarg/toolsniff/capabilities"
 	"github.com/pranvgarg/toolsniff/config"
+	"github.com/pranvgarg/toolsniff/diagnostics"
 	"github.com/pranvgarg/toolsniff/internal/update"
 	"github.com/pranvgarg/toolsniff/internal/version"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/output"
+	"github.com/pranvgarg/toolsniff/profile"
 	"github.com/pranvgarg/toolsniff/registry"
 	"github.com/pranvgarg/toolsniff/scanner"
 )
@@ -41,16 +47,19 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 	}
 	appVersion := version.Current()
 
-	if options.version {
-		fmt.Fprintln(outputWriter, appVersion)
-		return 0
-	}
 	if err := validateMode(options); err != nil {
 		fmt.Fprintln(errorOutput, err)
 		return 2
 	}
+	if options.version {
+		fmt.Fprintln(outputWriter, appVersion)
+		return 0
+	}
 	if options.update {
 		return runUpdate(options.yes, input, outputWriter, errorOutput)
+	}
+	if options.snapshots {
+		return listSnapshots(outputWriter, errorOutput)
 	}
 
 	settings, err := config.Load(options.configPath)
@@ -60,35 +69,48 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 	}
 
 	registrations := buildScanners(settings)
-	tools, warnings := scanTools(registrations)
-	installedTools, availableTools, npxHistory := splitByRole(tools, registrations)
+	observations, warnings := scanner.RunObservations(registrations)
+	installedObservations, availableObservations, historyObservations := splitObservations(observations)
 
 	regPath := settings.RegistryPath
-	baseline, regWarning := registry.Load(regPath)
+	baseline, regWarning := registry.LoadObservations(regPath)
 	if regWarning != "" {
 		warnings = append(warnings, scanner.Warning{Source: "registry", Err: errors.New(regWarning)})
 	}
 	availabilityPath := registry.AvailabilityPath(regPath)
-	availabilityBaseline, availabilityWarning := registry.Load(availabilityPath)
+	availabilityBaseline, availabilityWarning := registry.LoadObservations(availabilityPath)
 	if availabilityWarning != "" {
 		warnings = append(warnings, scanner.Warning{Source: "availability-registry", Err: errors.New(availabilityWarning)})
 	}
-	diff := registry.ComputeDiff(baseline, installedTools)
-	availabilityDiff := registry.ComputeDiff(availabilityBaseline, availableTools)
+	diff := registry.ComputeObservationDiff(baseline, installedObservations)
+	availabilityDiff := registry.ComputeObservationDiff(availabilityBaseline, availableObservations)
+	reportChanges := mergeObservationDiffs(diff, availabilityDiff)
+	report := output.NewObservationReport(installedObservations, availableObservations, historyObservations, reportChanges, warningStrings(warnings))
 
-	return dispatchReport(options, settings, registrations, installedTools, availableTools, npxHistory, diff, availabilityDiff, warnings, appVersion, outputWriter, errorOutput)
+	return dispatchReport(options, settings, registrations, installedObservations, availableObservations, report, diff, availabilityDiff, warnings, appVersion, outputWriter, errorOutput)
 }
 
 type cliOptions struct {
-	list       bool
-	json       bool
-	save       bool
-	diff       bool
-	available  bool
-	update     bool
-	yes        bool
-	version    bool
-	configPath string
+	list              bool
+	json              bool
+	save              bool
+	diff              bool
+	available         bool
+	doctor            bool
+	capabilities      bool
+	capabilitiesProbe bool
+	snapshot          bool
+	snapshots         bool
+	export            string
+	exportSet         bool
+	compare           string
+	compareSet        bool
+	support           string
+	supportSet        bool
+	update            bool
+	yes               bool
+	version           bool
+	configPath        string
 }
 
 func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
@@ -101,6 +123,14 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 	flags.BoolVar(&options.save, "save", false, "scan, save the result as the new baseline, and exit")
 	flags.BoolVar(&options.diff, "diff", false, "scan, print only what changed since the last save, and exit")
 	flags.BoolVar(&options.available, "available", false, "include PATH availability changes with --diff")
+	flags.BoolVar(&options.doctor, "doctor", false, "scan and print a read-only health and provenance report")
+	flags.BoolVar(&options.capabilities, "capabilities", false, "scan and print explicit capability results as JSON")
+	flags.BoolVar(&options.capabilitiesProbe, "capabilities-probe", false, "opt in to bounded version probes for --capabilities")
+	flags.BoolVar(&options.snapshot, "snapshot", false, "scan and save non-history observations as a snapshot")
+	flags.BoolVar(&options.snapshots, "snapshots", false, "list saved snapshots without scanning")
+	flags.StringVar(&options.export, "export-profile", "", "scan and export a sanitized profile to FILE")
+	flags.StringVar(&options.compare, "compare-profile", "", "scan and compare observations with profile FILE")
+	flags.StringVar(&options.support, "support-bundle", "", "scan and write a sanitized support bundle to FILE")
 	flags.BoolVar(&options.update, "update", false, "update the Homebrew-installed toolsniff binary and exit")
 	flags.BoolVar(&options.yes, "yes", false, "confirm --update without prompting")
 	flags.BoolVar(&options.version, "version", false, "print the toolsniff version and exit")
@@ -109,18 +139,57 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 	if err := flags.Parse(args); err != nil {
 		return cliOptions{}, err
 	}
+	flags.Visit(func(flag *flag.Flag) {
+		switch flag.Name {
+		case "export-profile":
+			options.exportSet = true
+		case "compare-profile":
+			options.compareSet = true
+		case "support-bundle":
+			options.supportSet = true
+		}
+	})
 	return options, nil
 }
 
 func validateMode(options cliOptions) error {
 	selectedModes := 0
-	for _, selected := range []bool{options.list, options.json, options.save, options.diff, options.update} {
+	for _, selected := range []bool{
+		options.list,
+		options.json,
+		options.save,
+		options.diff,
+		options.doctor,
+		options.capabilities,
+		options.snapshot,
+		options.snapshots,
+		options.update,
+		options.version,
+		options.exportSet,
+		options.compareSet,
+		options.supportSet,
+	} {
 		if selected {
 			selectedModes++
 		}
 	}
 	if selectedModes > 1 {
-		return errors.New("only one of --list, --json, --save, --diff, or --update may be used")
+		if options.list || options.json || options.save || options.diff || options.update {
+			return errors.New("only one of --list, --json, --save, --diff, or --update may be used")
+		}
+		return errors.New("only one report, snapshot, profile, or update mode may be used")
+	}
+	if options.exportSet && options.export == "" {
+		return errors.New("--export-profile requires FILE")
+	}
+	if options.compareSet && options.compare == "" {
+		return errors.New("--compare-profile requires FILE")
+	}
+	if options.supportSet && options.support == "" {
+		return errors.New("--support-bundle requires FILE")
+	}
+	if options.capabilitiesProbe && !options.capabilities {
+		return errors.New("--capabilities-probe may only be used with --capabilities")
 	}
 	return validateFlags(options.available, options.diff, options.update, options.yes)
 }
@@ -200,6 +269,40 @@ func splitByRole(tools []model.Tool, registrations []scanner.Registration) (inst
 	return installed, available, history
 }
 
+func splitObservations(observations []model.Observation) (installed, available, history []model.Observation) {
+	for _, observation := range observations {
+		switch observation.Role {
+		case model.RoleHistory:
+			history = append(history, observation)
+		case model.RoleAvailable:
+			available = append(available, observation)
+		default:
+			installed = append(installed, observation)
+		}
+	}
+	return installed, available, history
+}
+
+func mergeObservationDiffs(left, right registry.ObservationDiff) registry.ObservationDiff {
+	return registry.ObservationDiff{
+		Added:     append(append([]registry.ChangeEvent{}, left.Added...), right.Added...),
+		Removed:   append(append([]registry.ChangeEvent{}, left.Removed...), right.Removed...),
+		Updated:   append(append([]registry.ChangeEvent{}, left.Updated...), right.Updated...),
+		Relocated: append(append([]registry.ChangeEvent{}, left.Relocated...), right.Relocated...),
+		Broken:    append(append([]registry.ChangeEvent{}, left.Broken...), right.Broken...),
+		Repaired:  append(append([]registry.ChangeEvent{}, left.Repaired...), right.Repaired...),
+		Shadowed:  append(append([]registry.ChangeEvent{}, left.Shadowed...), right.Shadowed...),
+	}
+}
+
+func warningStrings(warnings []scanner.Warning) []string {
+	result := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		result = append(result, fmt.Sprintf("%s: %v", warning.Source, warning.Err))
+	}
+	return result
+}
+
 func registrationSources(registrations []scanner.Registration) []scanner.SourceInfo {
 	sources := make([]scanner.SourceInfo, 0, len(registrations))
 	for _, registration := range registrations {
@@ -218,38 +321,87 @@ func validateFlags(available, diff, updateMode, yes bool) error {
 	return nil
 }
 
-func dispatchReport(options cliOptions, settings config.Settings, registrations []scanner.Registration, installedTools, availableTools, npxHistory []model.Tool, diff, availabilityDiff registry.Diff, warnings []scanner.Warning, appVersion string, outputWriter, errorOutput io.Writer) int {
+func dispatchReport(options cliOptions, settings config.Settings, registrations []scanner.Registration, installedObservations, availableObservations []model.Observation, report output.ObservationReport, diff, availabilityDiff registry.ObservationDiff, warnings []scanner.Warning, appVersion string, outputWriter, errorOutput io.Writer) int {
 	regPath := settings.RegistryPath
 	switch {
 	case options.save:
-		if err := registry.Save(regPath, installedTools); err != nil {
+		if err := registry.SaveObservations(regPath, installedObservations); err != nil {
 			fmt.Fprintln(errorOutput, err)
 			return 1
 		}
-		if err := registry.Save(registry.AvailabilityPath(regPath), availableTools); err != nil {
+		if err := registry.SaveObservations(registry.AvailabilityPath(regPath), availableObservations); err != nil {
 			fmt.Fprintln(errorOutput, err)
 			return 1
 		}
-		fmt.Fprintf(outputWriter, "saved baseline: %d installed tools, %d available commands\n", len(installedTools), len(availableTools))
+		fmt.Fprintf(outputWriter, "saved baseline: %d installed tools, %d available commands\n", len(installedObservations), len(availableObservations))
 		writeWarnings(errorOutput, warnings)
 	case options.diff:
-		fmt.Fprint(outputWriter, output.RenderDiff(diff))
+		fmt.Fprint(outputWriter, renderObservationDiff(diff))
 		if options.available {
 			fmt.Fprintln(outputWriter, "AVAILABILITY CHANGES")
-			fmt.Fprint(outputWriter, output.RenderDiff(availabilityDiff))
+			fmt.Fprint(outputWriter, renderObservationDiff(availabilityDiff))
 		}
 		writeWarnings(errorOutput, warnings)
 	case options.json:
-		data, err := output.RenderJSON(installedTools, availableTools, npxHistory, diff, registry.Diff{}, warnings)
+		data, err := output.RenderObservationJSON(report)
 		if err != nil {
 			fmt.Fprintln(errorOutput, err)
 			return 1
 		}
 		fmt.Fprintln(outputWriter, string(data))
 	case options.list:
-		fmt.Fprint(outputWriter, output.RenderTable(installedTools, availableTools, npxHistory, diff, registry.Diff{}, warnings))
+		fmt.Fprint(outputWriter, output.RenderObservationTable(report))
+	case options.doctor:
+		fmt.Fprint(outputWriter, renderDoctorReport(report.AllObservations()))
+		writeWarnings(errorOutput, warnings)
+	case options.capabilities:
+		probeOptions := capabilities.Options{}
+		if options.capabilitiesProbe {
+			probeOptions.Probe = &scanner.ProbeOptions{Enabled: true}
+		}
+		results := capabilities.DefaultRegistry().DetectWithOptions(report.AllObservations(), probeOptions)
+		data, err := capabilities.RenderJSON(results)
+		if err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 1
+		}
+		fmt.Fprintln(outputWriter, string(data))
+		writeWarnings(errorOutput, warnings)
+	case options.snapshot:
+		observations := nonHistoryObservations(installedObservations, availableObservations)
+		path, err := registry.NewSnapshotStore("").Save(registry.NewSnapshot(observations, appVersion))
+		if err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 1
+		}
+		fmt.Fprintf(outputWriter, "saved snapshot: %s (%d observations)\n", path, len(observations))
+		writeWarnings(errorOutput, warnings)
+	case options.export != "":
+		value := currentProfile(report, appVersion)
+		if err := writeProfile(options.export, value); err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 1
+		}
+		fmt.Fprintf(outputWriter, "exported profile: %s (%d observations)\n", options.export, len(value.Observations))
+		writeWarnings(errorOutput, warnings)
+	case options.compare != "":
+		before, err := loadProfile(options.compare)
+		if err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 1
+		}
+		diff := profile.CompareProfiles(before, currentProfile(report, appVersion))
+		fmt.Fprint(outputWriter, renderObservationDiff(diff))
+		writeWarnings(errorOutput, warnings)
+	case options.support != "":
+		if err := profile.WriteSupportBundle(options.support, currentProfile(report, appVersion)); err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 1
+		}
+		fmt.Fprintf(outputWriter, "wrote support bundle: %s\n", options.support)
+		writeWarnings(errorOutput, warnings)
 	default:
-		if err := output.RunTUI(installedTools, availableTools, npxHistory, diff, warnings, output.TUIOptions{
+		if err := output.RunObservationTUI(report, output.TUIOptions{
 			Sources:      registrationSources(registrations),
 			RegistryPath: regPath,
 			Version:      appVersion,
@@ -261,6 +413,144 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 		}
 	}
 	return 0
+}
+
+func nonHistoryObservations(installed, available []model.Observation) []model.Observation {
+	result := make([]model.Observation, 0, len(installed)+len(available))
+	result = append(result, installed...)
+	result = append(result, available...)
+	return result
+}
+
+func listSnapshots(outputWriter, errorOutput io.Writer) int {
+	snapshots, err := registry.NewSnapshotStore("").List()
+	if err != nil {
+		fmt.Fprintln(errorOutput, err)
+		return 1
+	}
+	if len(snapshots) == 0 {
+		fmt.Fprintln(outputWriter, "no snapshots")
+		return 0
+	}
+	for _, snapshot := range snapshots {
+		version := snapshot.Version
+		if version == "" {
+			version = "unknown"
+		}
+		fmt.Fprintf(outputWriter, "%s\t%s\t%s\n", snapshot.CreatedAt.UTC().Format(time.RFC3339Nano), version, snapshot.Path)
+	}
+	return 0
+}
+
+func renderDoctorReport(observations []model.Observation) string {
+	report := diagnostics.Analyze(observations)
+	var b strings.Builder
+	fmt.Fprintln(&b, "TOOLSNIFF DOCTOR")
+	fmt.Fprintf(&b, "OBSERVATIONS: %d\n", len(observations))
+	fmt.Fprintf(&b, "ISSUES: %d\n", len(report.Issues))
+	for _, issue := range report.Issues {
+		fmt.Fprintf(&b, "  [%s] %s", issue.Kind, issue.Name)
+		if issue.CommandName != "" && issue.CommandName != issue.Name {
+			fmt.Fprintf(&b, " (%s)", issue.CommandName)
+		}
+		if detail := diagnosticDetail(issue); detail != "" {
+			fmt.Fprintf(&b, ": %s", detail)
+		}
+		b.WriteByte('\n')
+	}
+	fmt.Fprintf(&b, "PROVENANCE: %d\n", len(report.Provenance))
+	for _, edge := range report.Provenance {
+		fmt.Fprintf(&b, "  [%s] %s -> %s (%s)\n", edge.Kind, edge.PackageName, edge.LocationPath, edge.LocationType)
+	}
+	return b.String()
+}
+
+func diagnosticDetail(issue diagnostics.Issue) string {
+	switch issue.Kind {
+	case diagnostics.IssueShadowedCommand:
+		return "shadowed by " + strings.Join(issue.ShadowedPaths, ", ")
+	case diagnostics.IssueBrokenLocation:
+		return issue.LocationPath
+	case diagnostics.IssueArchitectureMismatch:
+		return fmt.Sprintf("expected %s, found %s", strings.Join(issue.ExpectedArchitectures, ", "), strings.Join(issue.ObservedArchitectures, ", "))
+	case diagnostics.IssueUnsignedApplication:
+		return issue.LocationPath
+	case diagnostics.IssueUnknownSigningStatus:
+		return "signing status unknown"
+	case diagnostics.IssueMissingExecutableLink:
+		return "missing executable " + issue.ExecutableName
+	case diagnostics.IssueUnknownVersion:
+		return "version unknown"
+	default:
+		return ""
+	}
+}
+
+func currentProfile(report output.ObservationReport, appVersion string) profile.Profile {
+	value := profile.New(report.AllObservations(), &report)
+	value.Version = appVersion
+	return profile.Sanitize(value)
+}
+
+func loadProfile(path string) (profile.Profile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return profile.Profile{}, fmt.Errorf("profile: reading %s: %w", path, err)
+	}
+	value, err := profile.Unmarshal(data)
+	if err != nil {
+		return profile.Profile{}, fmt.Errorf("profile: loading %s: %w", path, err)
+	}
+	return profile.Sanitize(value), nil
+}
+
+func writeProfile(path string, value profile.Profile) error {
+	if path == "" {
+		return errors.New("profile: empty profile path")
+	}
+	data, err := profile.Marshal(value)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("profile: creating directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("profile: securing directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".profile-*.tmp")
+	if err != nil {
+		return fmt.Errorf("profile: creating temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("profile: securing temporary file: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("profile: writing temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("profile: syncing temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("profile: closing temporary file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("profile: replacing %s: %w", path, err)
+	}
+	return nil
+}
+
+func renderObservationDiff(diff registry.ObservationDiff) string {
+	if len(diff.Events()) == 0 {
+		return "no changes since last scan\n"
+	}
+	return output.RenderChangeReport(output.NewObservationReport(nil, nil, nil, diff, nil).Changes)
 }
 
 func writeWarnings(errorOutput io.Writer, warnings []scanner.Warning) {

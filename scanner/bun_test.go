@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pranvgarg/toolsniff/model"
 )
 
 func TestBunScannerDiscoversGlobalBinaries(t *testing.T) {
@@ -43,5 +45,22 @@ func TestBunScannerNotInstalled(t *testing.T) {
 	}
 	if len(tools) != 0 {
 		t.Errorf("expected no tools on error, got %+v", tools)
+	}
+}
+
+func TestBunObservationsExposeExecutableLocationsWithoutFabricatingMetadata(t *testing.T) {
+	observations := BunObservationsFromTools([]model.Tool{{Name: "bun-tool", Source: model.SourceBun, Path: "/tmp/bun/bin/bun-tool"}})
+	if len(observations) != 1 {
+		t.Fatalf("expected one observation, got %d", len(observations))
+	}
+	observation := observations[0]
+	if observation.Kind != model.KindExecutable || observation.Origin.Provider != "bun" || observation.Version.State != model.VersionNotReported {
+		t.Errorf("unexpected bun observation: %+v", observation)
+	}
+	if len(observation.Locations) != 1 || observation.Locations[0].Path != "/tmp/bun/bin/bun-tool" || !observation.Locations[0].Executable {
+		t.Errorf("unexpected bun locations: %+v", observation.Locations)
+	}
+	if err := observation.Validate(); err != nil {
+		t.Fatalf("bun observation should validate: %v", err)
 	}
 }

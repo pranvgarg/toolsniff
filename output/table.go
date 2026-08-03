@@ -129,3 +129,38 @@ func RenderDiff(diff registry.Diff) string {
 	}
 	return b.String()
 }
+
+// RenderObservationTable renders the v2 report with separate version, status,
+// and source columns. RenderTable remains available to direct legacy callers.
+func RenderObservationTable(report ObservationReport) string {
+	rows := RowsForReport(report, ViewAll)
+	var b strings.Builder
+	fmt.Fprintln(&b, "NAME                           VERSION        STATUS       SOURCE")
+	fmt.Fprintln(&b, "---------------------------------------------------------------------")
+	for _, row := range rows {
+		fmt.Fprintf(&b, "%-30s %-14s %-12s %s\n", row.Name, row.Version, row.Status, row.Source)
+	}
+	if len(rows) == 0 {
+		b.WriteString("No observations found.\n")
+	}
+	if len(report.Changes.Events()) > 0 {
+		b.WriteString("\nCHANGES\n")
+		b.WriteString(RenderChangeReport(report.Changes))
+	}
+	if len(report.Warnings) > 0 {
+		for _, warning := range report.Warnings {
+			fmt.Fprintf(&b, "warning: %s\n", warning)
+		}
+	}
+	return b.String()
+}
+
+// RenderReportTable is the descriptive alias for the v2 table renderer.
+func RenderReportTable(report ObservationReport) string {
+	return RenderObservationTable(report)
+}
+
+// RenderTableV2 is kept as an obvious migration target for the future CLI.
+func RenderTableV2(report ObservationReport) string {
+	return RenderObservationTable(report)
+}

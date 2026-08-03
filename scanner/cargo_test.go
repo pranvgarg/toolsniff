@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pranvgarg/toolsniff/model"
 )
 
 func TestCargoScannerListsBinaries(t *testing.T) {
@@ -39,5 +41,22 @@ func TestCargoScannerMissingDirIsNotAnError(t *testing.T) {
 	}
 	if len(tools) != 0 {
 		t.Errorf("expected no tools, got %+v", tools)
+	}
+}
+
+func TestCargoObservationsExposeExecutableLocationsWithoutFabricatingMetadata(t *testing.T) {
+	observations := CargoObservationsFromTools([]model.Tool{{Name: "ripgrep", Source: model.SourceCargo, Path: "/Users/test/.cargo/bin/rg"}})
+	if len(observations) != 1 {
+		t.Fatalf("expected one observation, got %d", len(observations))
+	}
+	observation := observations[0]
+	if observation.Kind != model.KindExecutable || observation.Origin.Provider != "cargo" || observation.Version.State != model.VersionNotReported {
+		t.Errorf("unexpected cargo observation: %+v", observation)
+	}
+	if len(observation.Locations) != 1 || observation.Locations[0].Path != "/Users/test/.cargo/bin/rg" || !observation.Locations[0].Executable {
+		t.Errorf("unexpected cargo locations: %+v", observation.Locations)
+	}
+	if err := observation.Validate(); err != nil {
+		t.Fatalf("cargo observation should validate: %v", err)
 	}
 }
