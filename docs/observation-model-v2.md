@@ -478,18 +478,240 @@ future schema without a warning.
 
 ### Table and TUI
 
+The TUI must use progressive disclosure. The overview answers what needs
+attention, the list supports scanning, and the detail view preserves every
+available fact without forcing all fields into one row.
+
+The primary navigation should be user-intent-oriented rather than source-only:
+
+```text
+ALL              1,423
+INSTALLED          207
+AVAILABLE        1,209
+CHANGES              4
+ISSUES               7
+HISTORY             60
+```
+
+Sources remain available as filters:
+
+```text
+npm · brew-formula · brew-cask · pipx · cargo · bun · applications · path
+```
+
 The primary row should become:
 
 ```text
-Name                 Version        Status      Location
-gh                   2.75.0         installed   /opt/homebrew/bin/gh
-opencode-ai          1.18.11        installed   npm global
-custom-tool          unknown        available   ~/.local/bin/custom-tool
-create-vite           not-applicable history     last used 2026-07-31
+Name                    Version       Status       Source
+gh                      2.75.0        installed    brew-formula
+opencode-ai             1.18.11       installed    npm
+custom-tool             unknown       available    path
+create-vite             n/a           history      npx-history
 ```
 
-Do not show a path in a column named Version. The TUI may use a responsive
-layout, but version state and location must remain visually distinct.
+Do not show a path in a column named Version. A location may appear as a
+dedicated column on wide terminals, but normally belongs in the detail view.
+The TUI must display explicit version states such as `unknown`, `n/a`, and
+`not reported` rather than silently falling back to a path.
+
+Press `enter` to open a complete detail view:
+
+```text
+Tool Details
+
+Name:          @google/gemini-cli
+Kind:          CLI
+Status:        installed and available
+Source:        npm global
+Package:       @google/gemini-cli
+Version:       0.53.1
+Version state: known
+Confidence:    high
+
+Locations:
+  package:    ~/.npm-global/lib/node_modules/@google/gemini-cli
+  executable: ~/.npm-global/bin/gemini
+
+Availability:
+  active command: yes
+  PATH index: 3
+
+Evidence:
+  npm package metadata
+  executable link discovery
+```
+
+The detail view is read-only. It may support copying a path, copying the
+selected observation as JSON, and revealing a location in Finder.
+
+### User-Friendly Filtering
+
+Simple search must work without a query language. Press `/` and type normal
+text to search globally across display name, command name, package name, source,
+version, status, and path:
+
+```text
+/gemini
+Filter: gemini                         4 matches
+```
+
+Press `f` to open a visual filter drawer:
+
+```text
+Filter Inventory
+
+Search       gemini
+View         Installed
+Source       All
+Kind         CLI
+Version      Any
+Status       Any
+
+              Apply     Clear     Cancel
+```
+
+The filter drawer must support:
+
+- Views: All, Installed, Available, Changes, Issues, History.
+- Sources: npm, brew-formula, brew-cask, pipx, cargo, bun, applications, path.
+- Kinds: CLI, application, package, executable, history.
+- Version states: known, unknown, not reported, not applicable.
+- Statuses: installed, available, updated, shadowed, broken, relocated.
+
+Power users may use optional structured filters with simple AND semantics:
+
+```text
+source:npm gemini
+kind:application claude
+version:unknown
+source:brew-formula status:updated
+```
+
+Regex is not the default. The default interaction should be plain text and
+facets, not syntax memorization.
+
+Active filters must remain visible as removable chips:
+
+```text
+Filter: gemini  [source:npm x] [status:updated x]    2 matches
+```
+
+Empty results must explain the active filters and provide clear actions:
+
+```text
+No matches
+
+Current filters:
+  source:npm
+  status:updated
+  search: gemini
+
+Try: clear status filter or search all sources
+```
+
+Filtering only changes visibility. It must never remove observations from the
+report or affect JSON output.
+
+### TUI Interaction and Responsive Layout
+
+The key map should provide:
+
+```text
+enter     open details
+esc       close details or clear the current mode
+/         global search
+f         filter drawer
+d         changes view
+i         issues view
+s         save baseline
+p         copy selected path
+c         copy selected observation JSON
+o         reveal selected location
+r         refresh scan
+?         help
+q         quit
+```
+
+The layout should adapt without losing information:
+
+- Wide terminal: sidebar, inventory list, and optional detail pane.
+- Medium terminal: sidebar and inventory list, with details as a modal view.
+- Narrow terminal: compact view strip and inventory list.
+- Very narrow terminal: selected row plus detail view as the primary screen.
+
+Large PATH inventories must remain responsive. Metadata enrichment and probes
+must be lazy for selected rows or explicitly requested views, not performed for
+every row while the user types.
+
+### Changes and Issues Views
+
+The changes view must retain event types and before/after context rather than
+turning events into ordinary tool rows:
+
+```text
+CHANGES
+
+UPDATED
+  opencode-ai
+  1.18.10 -> 1.18.11
+
+RELOCATED
+  gh
+  /usr/local/bin/gh
+  -> /opt/homebrew/bin/gh
+
+BROKEN
+  internal-tool
+  ~/.local/bin/internal-tool
+
+SHADOWED
+  node
+  active: /opt/homebrew/bin/node
+  hidden: /usr/local/bin/node
+```
+
+The Issues view should summarize actionable health findings:
+
+```text
+ISSUES
+
+3 shadowed commands
+2 broken executable paths
+1 unknown application version
+1 architecture mismatch
+```
+
+### TUI Presentation Types
+
+The TUI must not format domain observations directly. Add a presentation layer:
+
+```go
+type InventoryRow struct {
+    ObservationID string
+    Name          string
+    Version       string
+    VersionState  string
+    Status        string
+    Source        string
+    Kind          string
+}
+
+type DetailViewModel struct {
+    Title    string
+    Sections []DetailSection
+}
+
+type FilterState struct {
+    Text         string
+    Sources      map[string]bool
+    Roles        map[model.SourceRole]bool
+    Kinds        map[ObservationKind]bool
+    VersionState map[VersionState]bool
+    Statuses     map[Status]bool
+}
+```
+
+This keeps domain fields stable while allowing the UI to evolve independently.
 
 Filters should eventually include:
 
@@ -673,12 +895,13 @@ repaired, and shadowed observations.
 4. Add explicit “not-applicable” and unknown version handling.
 5. Keep legacy `Diff` compatibility during migration.
 
-### Wave 2: Persistence Migration
+### Wave 2: Persistence and Scanner Evidence
 
 **Depends on:** Wave 1
 
 **Gate:** Existing v1 registry arrays load into v2 observations, v2 files save
-atomically, corrupt files warn safely, and round-trip tests pass.
+atomically, corrupt files warn safely, and every scanner fixture produces valid
+observation states without fabricating metadata.
 
 #### Task 3: Versioned Registry Envelope
 
@@ -699,13 +922,6 @@ atomically, corrupt files warn safely, and round-trip tests pass.
 3. Preserve separate installed and availability files.
 4. Preserve warning and atomic-save semantics.
 5. Add migration, idempotence, corruption, and permission tests.
-
-### Wave 3: Scanner Evidence
-
-**Depends on:** Wave 1
-
-**Gate:** Every scanner produces valid observations with accurate version
-states; no scanner fabricates a version or installation origin.
 
 #### Task 4: Package Manager Metadata
 
@@ -775,13 +991,14 @@ index, shadowing information, and optional safe probe results.
 5. Enforce timeouts, output limits, no shell execution, and fixed arguments.
 6. Add tests for shadowing, broken links, permissions, and probe failures.
 
-### Wave 4: CLI and Output Migration
+### Wave 3: Shared Report and TUI Experience
 
-**Depends on:** Waves 2 and 3
+**Depends on:** Wave 2
 
 **Gate:** `--list`, `--json`, TUI, `--save`, `--diff`, and
 `--diff --available` expose the same v2 report semantics with no legacy field
-confusion.
+confusion. UI tests cover simple search, filter facets, detail views, changes,
+issues, responsive layouts, and large PATH inventories.
 
 #### Task 7: Shared Report Model
 
@@ -792,6 +1009,11 @@ confusion.
 - `output/table.go`
 - `output/tui_model.go`
 - `output/tui_frame.go`
+- `output/filter.go`
+- `output/filter_parser.go`
+- `output/filter_drawer.go`
+- `output/tui_detail.go`
+- `output/tui_changes.go`
 - Output tests
 
 **Consumes:** v2 observations, registry changes, and migrated baselines.
@@ -802,10 +1024,35 @@ confusion.
 
 1. Stop displaying paths in a Version column.
 2. Render version state labels such as `unknown` and `not-applicable`.
-3. Add columns or detail views for kind, source, origin, status, and location.
-4. Add filters for source, role, kind, version state, and health status.
-5. Preserve machine-readable v2 JSON.
-6. Add table, JSON, and TUI tests.
+3. Add a presentation layer with `InventoryRow` and `DetailViewModel` instead
+   of formatting domain observations directly.
+4. Add view-based navigation: All, Installed, Available, Changes, Issues, and
+   History.
+5. Add global plain-text search through `/` across name, command, package,
+   source, version, status, and path.
+6. Add a visual facet filter drawer through `f` for source, role, kind, version
+   state, and status.
+7. Add optional structured filters with simple AND semantics, such as
+   `source:npm gemini` and `status:shadowed`.
+8. Show active filters as removable chips with match counts.
+9. Add clear empty-result explanations and filter reset actions.
+10. Add a read-only detail view through `enter` with metadata, locations,
+    availability, evidence, and safe copy/reveal actions.
+11. Preserve typed change events in the Changes view, including before/after
+    versions and relocation, broken, repaired, and shadowed states.
+12. Add an Issues view for actionable health findings.
+13. Preserve machine-readable v2 JSON.
+14. Keep large inventories responsive through lazy metadata loading and
+    bounded filtering work.
+15. Add table, JSON, filter, detail, changes, issues, responsive, and large
+    inventory tests.
+
+### Wave 4: CLI Compatibility and Migration Flow
+
+**Depends on:** Waves 2 and 3
+
+**Gate:** Existing CLI modes continue to work, v1 registries migrate safely,
+and JSON schema versioning is explicit.
 
 #### Task 8: CLI Compatibility and Migration Flow
 
@@ -815,7 +1062,8 @@ confusion.
 - `internal/cli/cli_test.go`
 - `main_integration_test.go`
 
-**Consumes:** Registry migration and report APIs from Waves 2 and 4.
+**Consumes:** Registry migration APIs from Wave 2 and report/TUI APIs from Wave
+3.
 
 **Produces:** Stable CLI behavior during the v1-to-v2 transition.
 
@@ -882,6 +1130,25 @@ default, a timeout, and fixture coverage.
 **Produces:** Explicit capabilities such as MCP, interactive CLI, Git hosting,
 LSP, and version probing.
 
+## Dependency Self-Review
+
+- Task 1 consumes only existing model and source-role contracts, so it is Wave
+  1.
+- Task 2 consumes Task 1's observation types, so it is Wave 1.
+- Task 3 consumes Tasks 1 and 2, so it is Wave 2.
+- Tasks 4, 5, and 6 consume Task 1 and are independent of Task 3 and each
+  other, so they are also Wave 2.
+- Task 7 consumes the persistence and scanner outputs from Wave 2, so it is
+  Wave 3.
+- Task 8 consumes registry migration from Wave 2 and the report/TUI contract
+  from Task 7, so it is Wave 4.
+- Tasks 9 and 10 consume the stable CLI/report model from Wave 4, so they are
+  Wave 5.
+- Task 11 consumes the safe probe and stable observation infrastructure from
+  Wave 5, so it is Wave 6.
+
+No task consumes an interface produced in the same wave or a later wave.
+
 ## Test Strategy
 
 Tests stay online in Git and remain close to the code they cover.
@@ -898,6 +1165,13 @@ Required tests:
 - Safe probe timeout and output-limit tests.
 - JSON schema contract tests.
 - Table and TUI state rendering tests.
+- Global plain-text search tests.
+- Structured filter parser and facet drawer tests.
+- Filter chip, empty-result, and clear-filter tests.
+- Detail view tests for every optional metadata section.
+- Changes and Issues view tests preserving event types.
+- Responsive layout tests for wide, medium, narrow, and very narrow terminals.
+- Large inventory tests with at least 1,000 available PATH observations.
 - Full CLI end-to-end tests with temporary registries and fake commands.
 - Snapshot and profile redaction tests.
 - Race, vet, and build gates for every load-bearing wave.
