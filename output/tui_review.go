@@ -31,15 +31,17 @@ package output
 // It takes styles where renderManage and renderDiscover do, and hands off to
 // the one row-level renderer every grouped pane in the TUI shares.
 func renderReview(report ObservationReport, selected int, styles ThemeStyles, width, height int) []string {
-	return renderReviewRows(RowsForReport(report, ViewReview), selected, width, height, styles)
+	// No marks, for the reason renderManage passes none: a report carries no
+	// multi-select state.
+	return renderReviewRows(RowsForReport(report, ViewReview), selected, nil, width, height, styles)
 }
 
 // renderReviewRows renders an already-narrowed Review row set. The TUI shell
 // goes through this one rather than through renderReview because its rows have
 // had the user's search and facets applied; re-deriving them from the report
 // would quietly ignore the filter the user is looking at.
-func renderReviewRows(rows []InventoryRow, selected, width, height int, styles ThemeStyles) []string {
-	return renderInventoryGroups(reviewGroups(rows), selected, width, height, styles)
+func renderReviewRows(rows []InventoryRow, selected int, marks rowMarks, width, height int, styles ThemeStyles) []string {
+	return renderInventoryGroups(reviewGroups(rows), selected, marks, width, height, styles)
 }
 
 // reviewGroups splits already-section-ordered rows into the Review blocks. It

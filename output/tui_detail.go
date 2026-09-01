@@ -24,22 +24,39 @@ type DetailSection struct {
 // DetailViewModel is independent of the domain object's JSON shape and can be
 // rendered as a modal, side pane, or plain text without changing model types.
 type DetailViewModel struct {
-	Title         string
+	Title string
+	// TypeLabel is the one-line "what is this" answer -- "Homebrew cask",
+	// "npm global package", "PATH executable". It leads the view because it is
+	// the question a user has before any of the metadata below matters.
+	TypeLabel string
+	// WhatThisIs is the same claim spelled out for someone who does not know
+	// what a cask is: "Homebrew cask — a macOS app installed via Homebrew
+	// Cask." It comes from the plain-language table in output/kinds.go.
+	WhatThisIs    string
 	ObservationID string
+	Kind          string
 	Sections      []DetailSection
+	// Actions are the per-kind operations offered for this observation,
+	// derived by KindActions. Nothing here has been executed.
+	Actions []Action
 }
 
 // BuildDetailViewModel includes every optional v2 metadata group when present.
 func BuildDetailViewModel(observation model.Observation) DetailViewModel {
 	detail := DetailViewModel{
 		Title:         observation.DisplayName + " Details",
+		TypeLabel:     ObservationTypeLabel(observation),
+		WhatThisIs:    WhatThisIsLine(observation),
 		ObservationID: observation.ID,
+		Kind:          string(observation.Kind),
+		Actions:       KindActions(observation),
 		Sections: []DetailSection{
 			{Title: "Overview", Fields: []DetailField{
 				{Label: "Name", Value: observation.DisplayName},
 				{Label: "Command", Value: emptyValue(observation.CommandName)},
+				{Label: "Type", Value: ObservationTypeLabel(observation)},
 				{Label: "Kind", Value: string(observation.Kind)},
-				{Label: "Status", Value: ObservationStatus(observation)},
+				{Label: "Status", Value: StatusDisplayLabel(ObservationStatus(observation))},
 				{Label: "Source", Value: ObservationSource(observation)},
 			}},
 			{Title: "Version", Fields: []DetailField{
@@ -137,6 +154,22 @@ func DetailForObservation(observation model.Observation) DetailViewModel {
 func RenderDetailView(detail DetailViewModel) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, detail.Title)
+	if detail.TypeLabel != "" {
+		fmt.Fprintln(&b, detail.TypeLabel)
+	}
+	// The plain-English sentence comes before anything else a reader has to
+	// already know the vocabulary to understand.
+	if detail.WhatThisIs != "" {
+		fmt.Fprintf(&b, "What this is: %s\n", detail.WhatThisIs)
+	}
+	// Actions lead, matching the styled pane in tui_panes.go: what you can do
+	// with the thing is more useful than the metadata that identifies it.
+	if len(detail.Actions) > 0 {
+		fmt.Fprintf(&b, "\n%s\n", "Actions")
+		for _, action := range detail.Actions {
+			fmt.Fprintf(&b, "  %-18s %s\n", action.Label+":", ActionCommandLine(action))
+		}
+	}
 	for _, section := range detail.Sections {
 		fmt.Fprintf(&b, "\n%s\n", section.Title)
 		for _, field := range section.Fields {
@@ -144,6 +177,16 @@ func RenderDetailView(detail DetailViewModel) string {
 		}
 	}
 	return b.String()
+}
+
+// ActionCommandLine is the single formatting of an action's right-hand side:
+// its shell-ready command when it has one, its note otherwise. It quotes
+// nothing and escapes nothing -- it is display text, not a shell string.
+func ActionCommandLine(action Action) string {
+	if action.Runnable() {
+		return strings.Join(action.Command, " ")
+	}
+	return action.Note
 }
 
 // CopySelectedPath returns a path for a caller-owned clipboard integration.

@@ -32,14 +32,16 @@ import (
 // disagree.
 func renderDiscover(report ObservationReport, selected int, styles ThemeStyles, width, height int) []string {
 	rows := InventoryRows(observationsForView(report, ViewDiscover))
-	return renderDiscoverRows(rows, discoverSuggestion(report, rows), selected, width, height, styles)
+	// No marks, for the reason renderManage passes none: a report carries no
+	// multi-select state.
+	return renderDiscoverRows(rows, discoverSuggestion(report, rows), selected, nil, width, height, styles)
 }
 
 // renderDiscoverRows renders an already-narrowed Discover row set. The TUI
 // shell goes through this one rather than through renderDiscover because its
 // rows have had the user's search and facets applied; re-deriving them from the
 // report would quietly ignore the filter the user is looking at.
-func renderDiscoverRows(rows []InventoryRow, suggestion string, selected, width, height int, styles ThemeStyles) []string {
+func renderDiscoverRows(rows []InventoryRow, suggestion string, selected int, marks rowMarks, width, height int, styles ThemeStyles) []string {
 	if height < 1 {
 		height = 1
 	}
@@ -59,7 +61,7 @@ func renderDiscoverRows(rows []InventoryRow, suggestion string, selected, width,
 		suggestion = ""
 	}
 
-	lines := renderInventoryGroups(discoverGroups(rows), selected, width, body, styles)
+	lines := renderInventoryGroups(discoverGroups(rows), selected, marks, width, body, styles)
 	if suggestion != "" {
 		lines = append(lines, fitWidth(styles.Footer.Render(suggestion), width))
 	}

@@ -185,6 +185,12 @@ type InventoryRow struct {
 	// row is copied by every filter and sort along the way. Empty when the entry
 	// has nothing runnable.
 	Action string
+	// Path is where the entry lives on disk, resolved in the same order the
+	// reveal action uses. It is not displayed in any column; it is carried so
+	// the Discover pane can group rows by the directory a binary sits in, which
+	// is the one fact Source cannot answer for entries no manager installed.
+	// Empty when the scanner recorded no location.
+	Path string
 }
 
 // InventoryRows converts observations to responsive presentation data in one
@@ -200,14 +206,10 @@ func InventoryRows(observations []model.Observation) []InventoryRow {
 // RowsForReport returns rows for the selected primary view, including the
 // kind-first views (see output/kinds.go) and the status lenses they replaced.
 func RowsForReport(report ObservationReport, view ViewCategory) []InventoryRow {
-	if view == ViewChanges || view == ViewIssues {
+	if eventDrivenView(view) {
 		return rowsForEvents(report.Changes, view)
 	}
-	rows := InventoryRows(observationsForView(report, view))
-	if groupedView(view) {
-		rows = sortRowsByGroup(rows)
-	}
-	return rows
+	return sortRowsForView(InventoryRows(observationsForView(report, view)), view)
 }
 
 // InventoryRowFromObservation makes version and status states explicit.
@@ -221,6 +223,8 @@ func InventoryRowFromObservation(observation model.Observation) InventoryRow {
 		Source:        ObservationSource(observation),
 		Kind:          string(observation.Kind),
 		Action:        PrimaryActionLabel(observation),
+		Path: locationPath(observation, model.LocationExecutable, model.LocationPackagePrefix,
+			model.LocationApplication, model.LocationCache),
 	}
 }
 
@@ -252,6 +256,12 @@ const (
 	StatusBroken    Status = "broken"
 	StatusRepaired  Status = "repaired"
 	StatusShadowed  Status = "shadowed"
+	// Added and Removed only ever describe a change event, never a standing
+	// observation, which is why ObservationStatus cannot return them. They are
+	// named here so a view that groups events by status can refer to them
+	// without writing the words out again.
+	StatusAdded   Status = "added"
+	StatusRemoved Status = "removed"
 )
 
 func ObservationStatus(observation model.Observation) string {
@@ -321,14 +331,53 @@ func rowsForEvents(changes ChangeReport, view ViewCategory) []InventoryRow {
 		appendEvents(changes.Shadowed, StatusShadowed)
 		return rows
 	}
-	appendEvents(changes.Added, Status("added"))
-	appendEvents(changes.Removed, Status("removed"))
+	if view == ViewReview {
+		// Review's rows are built in its own section order rather than in the
+		// report's category order, because its pane draws sub-headings: a block
+		// is only coherent when its rows are contiguous, and reading the order
+		// off reviewSections is what keeps the flat selection index and the
+		// rendered blocks describing the same list. The sections partition the
+		// seven categories exhaustively, so this loses no event.
+		for _, section := range reviewSections {
+			for _, status := range section.Statuses {
+				appendEvents(changes.eventsForStatus(status), status)
+			}
+		}
+		return rows
+	}
+	appendEvents(changes.Added, StatusAdded)
+	appendEvents(changes.Removed, StatusRemoved)
 	appendEvents(changes.Updated, StatusUpdated)
 	appendEvents(changes.Relocated, StatusRelocated)
 	appendEvents(changes.Broken, StatusBroken)
 	appendEvents(changes.Repaired, StatusRepaired)
 	appendEvents(changes.Shadowed, StatusShadowed)
 	return rows
+}
+
+// eventsForStatus returns the typed event category a row status was built
+// from. It is the inverse of the status rowsForEvents stamps on each row, and
+// exists so a view can name the events it wants by status instead of reaching
+// for the struct field and re-deciding what that field means.
+func (c ChangeReport) eventsForStatus(status Status) []registry.ChangeEvent {
+	switch status {
+	case StatusAdded:
+		return c.Added
+	case StatusRemoved:
+		return c.Removed
+	case StatusUpdated:
+		return c.Updated
+	case StatusRelocated:
+		return c.Relocated
+	case StatusBroken:
+		return c.Broken
+	case StatusRepaired:
+		return c.Repaired
+	case StatusShadowed:
+		return c.Shadowed
+	default:
+		return nil
+	}
 }
 
 // SortRows provides deterministic presentation ordering without changing the

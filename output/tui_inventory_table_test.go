@@ -122,7 +122,7 @@ func TestActionColumnLeavesNameRoomForAGroupHeading(t *testing.T) {
 // still exactly width cells, and there are still exactly height of them.
 func TestInventoryTableStillFitsItsBudgetWithTheActionColumn(t *testing.T) {
 	rows := []InventoryRow{InventoryRowFromObservation(npmCLIObservation())}
-	lines := renderInventoryTable(rows, 0, inventoryActionBreakpoint, 5, overviewStyles())
+	lines := renderInventoryTable(rows, 0, nil, inventoryActionBreakpoint, 5, overviewStyles())
 	if len(lines) != 5 {
 		t.Fatalf("renderInventoryTable returned %d lines, want 5", len(lines))
 	}

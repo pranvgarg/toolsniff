@@ -115,7 +115,7 @@ func validView(view ViewCategory) bool {
 	switch view {
 	case ViewOverview, ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory:
 		return true
-	case ViewManage, ViewDiscover, ViewReview, ViewHealth:
+	case ViewManage, ViewDiscover, ViewReview, ViewHealth, ViewUpdates:
 		return true
 	case ViewAll, ViewInstalled, ViewAvailable, ViewHistory, ViewChanges, ViewIssues:
 		return true

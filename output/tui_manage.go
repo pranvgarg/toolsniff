@@ -19,17 +19,19 @@ package output
 // It takes styles where renderOverview does, and hands off to a row-level
 // renderer that takes them where renderGroupedInventoryTable does.
 func renderManage(report ObservationReport, selected int, styles ThemeStyles, width, height int) []string {
-	return renderManageRows(InventoryRows(observationsForView(report, ViewManage)), selected, width, height, styles)
+	// No marks: a caller holding only a report has no multi-select state to
+	// render, and nil is the empty set.
+	return renderManageRows(InventoryRows(observationsForView(report, ViewManage)), selected, nil, width, height, styles)
 }
 
 // renderManageRows renders an already-narrowed Manage row set. The TUI shell
 // goes through this one rather than through renderManage because its rows have
 // had the user's search and facets applied; re-deriving them from the report
 // would quietly ignore the filter the user is looking at.
-func renderManageRows(rows []InventoryRow, selected, width, height int, styles ThemeStyles) []string {
+func renderManageRows(rows []InventoryRow, selected int, marks rowMarks, width, height int, styles ThemeStyles) []string {
 	// Sorting is idempotent: FilterReport already sorts every grouped view, so
 	// this only matters for callers that hand over raw rows. Grouping is only
 	// coherent when each manager's rows are contiguous, and paying for a sort
 	// twice is cheaper than a pane whose headings repeat.
-	return renderGroupedInventoryTable(sortRowsByGroup(rows), selected, width, height, styles)
+	return renderGroupedInventoryTable(sortRowsByGroup(rows), selected, marks, width, height, styles)
 }

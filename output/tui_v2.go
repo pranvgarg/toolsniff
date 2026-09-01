@@ -71,6 +71,12 @@ const (
 	uiModeV3 = "v3"
 )
 
+// UIModeLegacy is the TUIOptions.UIMode value for the original eight-tab
+// layout. It is exported so callers that override the configured ui.mode --
+// the --legacy-tabs rollback flag -- name the same value reportTabsForMode
+// reads instead of repeating the string literal.
+const UIModeLegacy = uiModeV2
+
 // v2ReportTabs is the kind-first navigation, ordered most useful first. It leads
 // with *what each thing is* rather than with what state a scanner filed it
 // under; the status lenses (all/installed/available/history) live on in the
