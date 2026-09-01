@@ -111,6 +111,7 @@ type cliOptions struct {
 	yes               bool
 	version           bool
 	configPath        string
+	legacyTabs        bool
 }
 
 func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
@@ -135,6 +136,7 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 	flags.BoolVar(&options.yes, "yes", false, "confirm --update without prompting")
 	flags.BoolVar(&options.version, "version", false, "print the toolsniff version and exit")
 	flags.StringVar(&options.configPath, "config", config.DefaultConfigPath(), "path to the TOML configuration file")
+	flags.BoolVar(&options.legacyTabs, "legacy-tabs", false, "use the original eight-tab layout instead of the intent-based v3 tabs")
 
 	if err := flags.Parse(args); err != nil {
 		return cliOptions{}, err
@@ -407,13 +409,24 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 			Version:      appVersion,
 			Theme:        settings.Theme,
 			ConfigPath:   settings.ConfigPath,
-			UIMode:       settings.UI.Mode,
+			UIMode:       resolveUIMode(settings, options.legacyTabs),
 		}); err != nil {
 			fmt.Fprintln(errorOutput, err)
 			return 1
 		}
 	}
 	return 0
+}
+
+// resolveUIMode picks the TUI tab layout. Configuration selects it normally;
+// --legacy-tabs is the rollback switch for the opt-in v3 rollout and wins over
+// the config file, so a user who hits trouble with the new tabs can get the
+// eight-tab layout back without editing (or finding) their TOML.
+func resolveUIMode(settings config.Settings, legacyTabs bool) string {
+	if legacyTabs {
+		return output.UIModeLegacy
+	}
+	return settings.UI.Mode
 }
 
 func nonHistoryObservations(installed, available []model.Observation) []model.Observation {

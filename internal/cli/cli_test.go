@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pranvgarg/toolsniff/config"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/profile"
 	"github.com/pranvgarg/toolsniff/registry"
@@ -551,6 +552,47 @@ func (s legacyFixtureScanner) Name() string { return "legacy-fixture" }
 
 func (s legacyFixtureScanner) Scan() ([]model.Tool, error) {
 	return []model.Tool{s.tool}, nil
+}
+
+// The --legacy-tabs flag is the rollback switch for the opt-in v3 rollout: it
+// pins the TUI to the eight-tab layout even when the config asks for v3.
+func TestLegacyTabsFlagForcesV2(t *testing.T) {
+	settings := config.Settings{UI: config.UISettings{Mode: "v3"}}
+	if mode := resolveUIMode(settings, true); mode != "v2" {
+		t.Fatalf("resolveUIMode(v3, legacyTabs=true) = %q, want v2", mode)
+	}
+	if mode := resolveUIMode(settings, false); mode != "v3" {
+		t.Fatalf("resolveUIMode(v3, legacyTabs=false) = %q, want v3", mode)
+	}
+}
+
+func TestResolveUIModeKeepsConfiguredV2Default(t *testing.T) {
+	settings := config.Settings{UI: config.UISettings{Mode: "v2"}}
+	if mode := resolveUIMode(settings, false); mode != "v2" {
+		t.Fatalf("resolveUIMode(v2, legacyTabs=false) = %q, want v2", mode)
+	}
+	if mode := resolveUIMode(settings, true); mode != "v2" {
+		t.Fatalf("resolveUIMode(v2, legacyTabs=true) = %q, want v2", mode)
+	}
+}
+
+func TestParseFlagsLegacyTabs(t *testing.T) {
+	var errorOutput bytes.Buffer
+	options, err := parseFlags([]string{"--legacy-tabs"}, &errorOutput)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if !options.legacyTabs {
+		t.Fatal("--legacy-tabs did not set options.legacyTabs")
+	}
+
+	options, err = parseFlags(nil, &errorOutput)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if options.legacyTabs {
+		t.Fatal("options.legacyTabs set without --legacy-tabs")
+	}
 }
 
 func toolsEqual(a, b []model.Tool) bool {
