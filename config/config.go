@@ -18,6 +18,7 @@ type Settings struct {
 	Path         PathSettings
 	Bun          BunSettings
 	Theme        ThemeSettings
+	UI           UISettings
 	NPXDir       string
 	CargoBinDir  string
 	RegistryPath string
@@ -38,6 +39,11 @@ type PathSettings struct {
 
 type BunSettings struct {
 	Enabled bool
+}
+
+// UISettings controls TUI tab layout.
+type UISettings struct {
+	Mode string `toml:"mode"` // "v2" = 8-tab kind-first, "v3" = 4-tab intent-based
 }
 
 // ThemeSettings contains the selected preset and any user color overrides.
@@ -80,6 +86,9 @@ type fileConfig struct {
 		Preset string      `toml:"preset"`
 		Colors ThemeColors `toml:"colors"`
 	} `toml:"theme"`
+	UI struct {
+		Mode string `toml:"mode"`
+	} `toml:"ui"`
 	NPX struct {
 		Dir string `toml:"dir"`
 	} `toml:"npx"`
@@ -130,6 +139,7 @@ func DefaultSettings() Settings {
 		},
 		Bun:          BunSettings{Enabled: true},
 		Theme:        DefaultThemeSettings(),
+		UI:           UISettings{Mode: "v2"},
 		NPXDir:       defaultNPXDir(),
 		CargoBinDir:  defaultCargoBinDir(),
 		RegistryPath: defaultRegistryPath(),
@@ -181,6 +191,9 @@ func applyFileConfig(settings *Settings, file fileConfig) error {
 	}
 	if err := applyThemeConfig(&settings.Theme, file.Theme.Preset, file.Theme.Colors); err != nil {
 		return err
+	}
+	if file.UI.Mode != "" {
+		settings.UI.Mode = file.UI.Mode
 	}
 	if file.NPX.Dir != "" {
 		settings.NPXDir = expandPath(file.NPX.Dir)

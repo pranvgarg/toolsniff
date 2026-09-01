@@ -7,6 +7,41 @@ import (
 	"time"
 )
 
+func TestConfigUIModeDefaultsToV2(t *testing.T) {
+	settings := DefaultSettings()
+	if settings.UI.Mode != "v2" {
+		t.Fatalf("default ui.mode = %q, want v2", settings.UI.Mode)
+	}
+}
+
+func TestLoadUIModeFromTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\nmode = \"v3\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settings.UI.Mode != "v3" {
+		t.Fatalf("ui.mode = %q, want v3", settings.UI.Mode)
+	}
+}
+
+func TestLoadOmittedUIModeKeepsDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[execution]\ntimeout = \"3s\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settings.UI.Mode != "v2" {
+		t.Fatalf("ui.mode = %q, want v2", settings.UI.Mode)
+	}
+}
+
 func TestLoadMissingFileReturnsDiscoveryDefaults(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "bin"))
 	settings, err := Load(filepath.Join(t.TempDir(), "missing.toml"))
