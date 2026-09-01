@@ -407,6 +407,7 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 			Version:      appVersion,
 			Theme:        settings.Theme,
 			ConfigPath:   settings.ConfigPath,
+			UIMode:       settings.UI.Mode,
 		}); err != nil {
 			fmt.Fprintln(errorOutput, err)
 			return 1

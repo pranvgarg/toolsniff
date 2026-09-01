@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/pranvgarg/toolsniff/model"
@@ -14,7 +13,9 @@ import (
 
 // reportTUIModel contains only v2 report interaction state. It is hosted by
 // tuiModel for the application entry point so the established shell remains
-// the owner of lifecycle, layout, and chrome.
+// the owner of lifecycle, layout, and chrome. uiMode carries the resolved
+// config ui.mode ("v2"/"v3"); it lives here because the shell re-reads it on
+// every tab move and every sync.
 type reportTUIModel struct {
 	report      ObservationReport
 	state       FilterState
@@ -27,6 +28,7 @@ type reportTUIModel struct {
 	rows        []InventoryRow
 	width       int
 	height      int
+	uiMode      string
 }
 
 // NewObservationTUIModel creates an additive report-backed Bubble Tea model.
@@ -40,28 +42,83 @@ func NewReportTUIModel(report ObservationReport) tea.Model {
 	return NewObservationTUIModel(report)
 }
 
-func newReportTUIModel(report ObservationReport) reportTUIModel {
+func newReportTUIModel(report ObservationReport, mode string) reportTUIModel {
 	state := NewFilterState()
-	model := reportTUIModel{report: report, state: state, drawer: NewFilterDrawer(state)}
+	// The landing view is the mode's first tab, which in v2 is the overview
+	// dashboard rather than a flat list: the first question is "what's on this
+	// machine", not "here are 200 rows".
+	state.View = ViewCategory(reportTabsForMode(mode)[0])
+	model := reportTUIModel{report: report, state: state, drawer: NewFilterDrawer(state), uiMode: mode}
 	model.rebuildRows()
 	return model
 }
 
-var reportTabs = []string{"all", "installed", "available", "history", "changes", "issues"}
+// UI mode ids, matching config's ui.mode values, and the v3 tab ids.
+//
+// The v3 ids are plain strings rather than ViewCategory constants because those
+// constants -- ViewManage/ViewDiscover/ViewReview/ViewHealth -- and their
+// kinds.go labels land in the next change. Until they do, a v3 tab has no
+// predicate of its own: observationsForView falls through to its default, so
+// every v3 tab lists the whole inventory. The wiring is real, the panes are not.
+const (
+	uiModeV2 = "v2"
+	uiModeV3 = "v3"
+
+	v3TabManage   = "manage"
+	v3TabDiscover = "discover"
+	v3TabReview   = "review"
+	v3TabHealth   = "health"
+)
+
+// v2ReportTabs is the kind-first navigation, ordered most useful first. It leads
+// with *what each thing is* rather than with what state a scanner filed it
+// under; the status lenses (all/installed/available/history) live on in the
+// filter drawer as `view:` values. See output/kinds.go for each tab's meaning.
+var v2ReportTabs = []string{
+	string(ViewOverview),
+	string(ViewCLI),
+	string(ViewPackages),
+	string(ViewApplications),
+	string(ViewPathExecutables),
+	string(ViewNpxHistory),
+	string(ViewChanges),
+	string(ViewIssues),
+}
+
+// v3ReportTabs is the intent-first navigation: four tabs named for what the user
+// came to do, not for what kind of thing a row is.
+var v3ReportTabs = []string{
+	v3TabManage,
+	v3TabDiscover,
+	v3TabReview,
+	v3TabHealth,
+}
+
+// reportTabsForMode is the tab set for a config ui.mode value. The returned
+// slice is shared and must not be mutated -- callers that keep it (the shell's
+// own tabs) copy it first. An unset or unrecognised mode is v2: navigation is
+// chrome, and a typo in the config file should not leave the user without it.
+func reportTabsForMode(mode string) []string {
+	if mode == uiModeV3 {
+		return v3ReportTabs
+	}
+	return v2ReportTabs
+}
 
 // newObservationTUIModel puts the v2 state inside the established TUI shell.
 // Keeping construction here makes the additive report model usable on its own
 // in tests and by adapters while the application gets the full TUI chrome.
 func newObservationTUIModel(report ObservationReport, options TUIOptions) tuiModel {
 	shell := newTUIModel(nil, nil, nil, registry.Diff{}, nil, options)
-	state := newReportTUIModel(report)
+	state := newReportTUIModel(report, options.UIMode)
 	shell.report = &state
 	shell.reportWarnings = append([]string(nil), report.Warnings...)
-	shell.tabs = append([]string(nil), reportTabs...)
-	shell.toolsBySrc = reportSidebarCounts(report)
-	shell.activeTab = reportTabIndex(state.state.View)
-	shell.content.SetRows(reportTableRows(state.rows, 0))
-	shell.content.SetColumns(reportColumnsFor(0))
+	shell.tabs = append([]string(nil), reportTabsForMode(options.UIMode)...)
+	// keyMap.FullHelp builds the "?" digit list but has no model to ask which
+	// tabs exist, so the resolved set is handed to it here.
+	shell.keys.reportTabs = shell.tabs
+	shell.toolsBySrc = reportSidebarCounts(report, options.UIMode)
+	shell.activeTab = reportTabIndex(options.UIMode, state.state.View)
 	shell.syncReportShell()
 	return shell
 }
@@ -74,88 +131,58 @@ func RunObservationTUI(report ObservationReport, options TUIOptions) error {
 	return err
 }
 
-func reportSidebarCounts(report ObservationReport) map[string][]model.Tool {
-	counts := map[string]int{
-		"all":       len(report.AllObservations()),
-		"installed": len(report.Installed),
-		"available": len(report.Available),
-		"history":   len(report.History),
-		"changes":   len(report.Changes.Events()),
-		"issues":    len(report.Changes.Broken) + len(report.Changes.Shadowed),
-	}
-	result := make(map[string][]model.Tool, len(counts))
-	for tab, count := range counts {
-		result[tab] = make([]model.Tool, count)
+// reportSidebarCounts fills the shell's count map for every tab in the active
+// mode. Counts come from CountForView, the same predicate the panes filter
+// with, so a sidebar number and its pane can never disagree.
+func reportSidebarCounts(report ObservationReport, mode string) map[string][]model.Tool {
+	tabs := reportTabsForMode(mode)
+	result := make(map[string][]model.Tool, len(tabs))
+	for _, tab := range tabs {
+		result[tab] = make([]model.Tool, CountForView(report, ViewCategory(tab)))
 	}
 	return result
 }
 
-func reportTabIndex(view ViewCategory) int {
-	for index, tab := range reportTabs {
+// reportTabIndex maps a view onto its tab in the active mode. A status lens
+// reached through the filter drawer has no tab of its own, so it keeps the
+// highlight on the tab that holds the same rows rather than snapping back to
+// the first one. The lookup is a search rather than a recursive call because a
+// fallback view need not itself be a tab: in v3, "on your PATH" and "npx
+// history" are both folded into Discover.
+func reportTabIndex(mode string, view ViewCategory) int {
+	tabs := reportTabsForMode(mode)
+	for index, tab := range tabs {
 		if tab == string(view) {
+			return index
+		}
+	}
+
+	var fallback ViewCategory
+	switch view {
+	case ViewAvailable:
+		fallback = ViewPathExecutables
+	case ViewHistory:
+		fallback = ViewNpxHistory
+	default:
+		return 0
+	}
+	if mode == uiModeV3 {
+		fallback = ViewCategory(v3TabDiscover)
+	}
+	for index, tab := range tabs {
+		if tab == string(fallback) {
 			return index
 		}
 	}
 	return 0
 }
 
-func reportViewForTab(index int) ViewCategory {
-	if index < 0 || index >= len(reportTabs) {
-		return ViewAll
+func reportViewForTab(mode string, index int) ViewCategory {
+	tabs := reportTabsForMode(mode)
+	if index < 0 || index >= len(tabs) {
+		return ViewCategory(tabs[0])
 	}
-	return ViewCategory(reportTabs[index])
-}
-
-func reportColumnsFor(width int) []table.Column {
-	if width <= 0 {
-		width = 80
-	}
-	nameWidth := width - contentVersionColWidth - 4
-	if nameWidth < 4 {
-		nameWidth = 4
-	}
-	switch {
-	case width < 45:
-		return []table.Column{{Title: "Name", Width: nameWidth}, {Title: "Version", Width: contentVersionColWidth}}
-	case width < 75:
-		statusWidth := 12
-		nameWidth = width - contentVersionColWidth - statusWidth - 8
-		if nameWidth < 4 {
-			nameWidth = 4
-		}
-		return []table.Column{
-			{Title: "Name", Width: nameWidth},
-			{Title: "Version", Width: contentVersionColWidth},
-			{Title: "Status", Width: statusWidth},
-		}
-	default:
-		statusWidth, sourceWidth := 12, 16
-		nameWidth = width - contentVersionColWidth - statusWidth - sourceWidth - 10
-		if nameWidth < 4 {
-			nameWidth = 4
-		}
-		return []table.Column{
-			{Title: "Name", Width: nameWidth},
-			{Title: "Version", Width: contentVersionColWidth},
-			{Title: "Status", Width: statusWidth},
-			{Title: "Source", Width: sourceWidth},
-		}
-	}
-}
-
-func reportTableRows(rows []InventoryRow, width int) []table.Row {
-	result := make([]table.Row, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, table.Row(ResponsiveRowData(row, width)))
-	}
-	return result
-}
-
-func (m tuiModel) reportLayoutWidth() int {
-	if m.width > 0 && m.width < compactWidthThreshold {
-		return m.width
-	}
-	return contentPaneWidth(m.width, sidebarWidth(m.tabs, m.toolsBySrc))
+	return ViewCategory(tabs[index])
 }
 
 func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -191,21 +218,24 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resizeContent()
 				return m, nil
 			case key.Matches(keyMsg, m.keys.NextTab):
-				m.report.state.View = reportViewForTab((reportTabIndex(m.report.state.View) + 1) % len(reportTabs))
+				tabs := reportTabsForMode(m.report.uiMode)
+				index := (reportTabIndex(m.report.uiMode, m.report.state.View) + 1) % len(tabs)
+				m.report.state.View = reportViewForTab(m.report.uiMode, index)
 				m.report.drawer.State = m.report.state
 				m.report.rebuildRows()
 				m.syncReportShell()
 				return m, nil
 			case key.Matches(keyMsg, m.keys.PrevTab):
-				index := (reportTabIndex(m.report.state.View) - 1 + len(reportTabs)) % len(reportTabs)
-				m.report.state.View = reportViewForTab(index)
+				tabs := reportTabsForMode(m.report.uiMode)
+				index := (reportTabIndex(m.report.uiMode, m.report.state.View) - 1 + len(tabs)) % len(tabs)
+				m.report.state.View = reportViewForTab(m.report.uiMode, index)
 				m.report.drawer.State = m.report.state
 				m.report.rebuildRows()
 				m.syncReportShell()
 				return m, nil
 			case key.Matches(keyMsg, m.keys.JumpTab):
-				if index := int(keyName[0] - '1'); index >= 0 && index < len(reportTabs) {
-					m.report.state.View = reportViewForTab(index)
+				if index := int(keyName[0] - '1'); index >= 0 && index < len(reportTabsForMode(m.report.uiMode)) {
+					m.report.state.View = reportViewForTab(m.report.uiMode, index)
 					m.report.drawer.State = m.report.state
 					m.report.rebuildRows()
 					m.syncReportShell()
@@ -228,33 +258,77 @@ func (m *tuiModel) syncReportShell() {
 	if m.report == nil {
 		return
 	}
-	m.activeTab = reportTabIndex(m.report.state.View)
+	m.activeTab = reportTabIndex(m.report.uiMode, m.report.state.View)
 	m.statusMsg = m.report.status
-	m.content.SetRows(reportTableRows(m.report.rows, m.reportLayoutWidth()))
-	m.content.SetCursor(m.report.selected)
 }
 
-func (m tuiModel) reportContentLines() []string {
+// reportContentLines renders the v2 content pane as exactly height lines of
+// exactly width cells: the detail pane, the filter drawer, the overview
+// dashboard, the change list, or a kind-first inventory pane, depending on what
+// the user has open.
+func (m tuiModel) reportContentLines(width, height int) []string {
 	if m.report.detail != nil {
-		return strings.Split(RenderDetailView(*m.report.detail), "\n")
+		return padPane(renderDetailLines(*m.report.detail, width, m.styles), width, height)
 	}
 	if m.report.drawer.Open {
-		return strings.Split(m.report.drawer.View(), "\n")
+		return padPane(renderDrawerLines(m.report.drawer, m.styles), width, height)
 	}
-	lines := []string{}
+
+	// The filter line only appears while the user is typing or has constraints
+	// applied; otherwise the pane's first line is spent saying what the view is
+	// in plain English, which is worth more than an empty chip list.
+	var lines []string
 	if m.report.filtering {
-		lines = append(lines, "Filter: "+m.report.filterInput)
-	} else {
-		lines = append(lines, FilterSummary(m.report.state, len(m.report.rows)))
+		lines = append(lines, fitWidth(m.styles.Badge.Render("/")+m.styles.Body.Render(m.report.filterInput)+
+			m.styles.Footer.Render(" ▏esc clear · enter apply"), width))
+	} else if len(FilterChips(reportFilterChipState(m.report.state))) > 0 {
+		lines = append(lines, fitWidth(m.styles.Footer.Render(FilterSummary(m.report.state, len(m.report.rows))), width))
 	}
-	if len(m.report.rows) == 0 {
-		lines = append(lines, EmptyResultMessage(m.report.state, 0))
-	} else if m.report.state.View == ViewChanges || m.report.state.View == ViewIssues {
-		lines = append(lines, RenderChangeReport(m.report.report.Changes))
-	} else {
-		lines = append(lines, strings.Split(m.content.View(), "\n")...)
+
+	if m.report.state.View == ViewOverview {
+		body := height - len(lines)
+		if body < 1 {
+			body = 1
+		}
+		return padPane(append(lines, renderOverview(m.report.report, m.styles, width, body)...), width, height)
 	}
-	return lines
+
+	// Every non-overview pane leads with its caption: the view's title, its
+	// count, and what it means. This is where "available" is spelled out as
+	// "On your PATH · 9 · not installed by a manager".
+	lines = append(lines, fitWidth(
+		m.styles.Badge.Render(ViewLabel(m.report.state.View))+
+			m.styles.Meta.Render(" · "+itoa(len(m.report.rows))+" · "+ViewMeaning(m.report.state.View)), width))
+
+	body := height - len(lines)
+	if body < 1 {
+		body = 1
+	}
+	switch {
+	case len(m.report.rows) == 0:
+		// With no filters applied an empty kind view is a fact about the
+		// machine, not a failed search, and it should say so in those words.
+		message := EmptyResultMessage(m.report.state, 0)
+		if len(FilterChips(reportFilterChipState(m.report.state))) == 0 {
+			message = "Nothing of this sort found on this machine."
+		}
+		lines = append(lines, m.styles.EmptyState.Render(message))
+	case m.report.state.View == ViewChanges || m.report.state.View == ViewIssues:
+		lines = append(lines, renderChangeLines(m.report.report.Changes, m.styles)...)
+	case groupedView(m.report.state.View):
+		lines = append(lines, m.groupedInventoryPane(m.report.rows, m.report.selected, width, body)...)
+	default:
+		lines = append(lines, m.inventoryPane(m.report.rows, m.report.selected, width, body)...)
+	}
+	return padPane(lines, width, height)
+}
+
+// reportFilterChipState hides the view chip when deciding whether the filter
+// line is worth a row: the caption already says which view is open, so a bare
+// "view:packages" chip is not new information.
+func reportFilterChipState(state FilterState) FilterState {
+	state.View = ViewAll
+	return state
 }
 
 func (m *reportTUIModel) Init() tea.Cmd { return nil }
@@ -411,6 +485,17 @@ func (m *reportTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "reveal command ready: " + strings.Join(command, " ")
 			}
 		}
+	case "y":
+		// Yank the primary per-kind command (upgrade/uninstall/open/reveal,
+		// whichever KindActions offers first). Nothing is executed; the
+		// command is handed to the status line for the user to copy.
+		if observation, ok := m.selectedObservation(); ok {
+			if command, ok := PrimaryActionCommand(observation); ok {
+				m.status = "command ready to copy: " + strings.Join(command, " ")
+			} else {
+				m.status = "no runnable action for this entry"
+			}
+		}
 	}
 	return m, nil
 }
@@ -430,7 +515,14 @@ func (m *reportTUIModel) View() tea.View {
 		return tea.NewView(lipgloss.NewStyle().Width(width).MaxHeight(height).Render(m.drawer.View()))
 	}
 
-	lines := []string{fmt.Sprintf("toolsniff inventory v%d", m.report.SchemaVersion), viewCounts(m.report)}
+	// The plain-text adapter view leads with the same caption the styled pane
+	// does -- what the open view is, in words -- then keeps the raw per-bucket
+	// counts below it, which is the surface adapters and scripts read.
+	lines := []string{
+		fmt.Sprintf("toolsniff inventory v%d", m.report.SchemaVersion),
+		ViewCaption(m.state.View, len(m.rows)),
+		viewCounts(m.report),
+	}
 	if m.filtering {
 		lines = append(lines, "Filter: "+m.filterInput)
 	} else {
@@ -456,20 +548,38 @@ func (m *reportTUIModel) View() tea.View {
 // without requiring the TUI model. It never substitutes a location for a
 // version.
 func ResponsiveRowData(row InventoryRow, width int) []string {
+	kind := kindLabel(row.Kind)
 	switch {
 	case width < 45:
 		return []string{row.Name, row.Version}
+	case width < 60:
+		return []string{row.Name, row.Version, kind}
 	case width < 75:
-		return []string{row.Name, row.Version, row.Status}
+		return []string{row.Name, row.Version, kind, row.Status}
 	default:
-		return []string{row.Name, row.Version, row.Status, row.Source}
+		return []string{row.Name, row.Version, kind, row.Status, row.Source}
+	}
+}
+
+// responsiveHeaders mirrors ResponsiveRowData's ladder. It is spelled out
+// rather than derived from a synthetic row, because "Kind" is a column title
+// and kindLabel only knows how to name actual kinds.
+func responsiveHeaders(width int) []string {
+	switch {
+	case width < 45:
+		return []string{"Name", "Version"}
+	case width < 60:
+		return []string{"Name", "Version", "Kind"}
+	case width < 75:
+		return []string{"Name", "Version", "Kind", "Status"}
+	default:
+		return []string{"Name", "Version", "Kind", "Status", "Source"}
 	}
 }
 
 func responsiveRows(rows []InventoryRow, width int) []string {
 	lines := make([]string, 0, len(rows)+1)
-	fields := ResponsiveRowData(InventoryRow{Name: "Name", Version: "Version", Status: "Status", Source: "Source"}, width)
-	lines = append(lines, strings.Join(fields, " | "))
+	lines = append(lines, strings.Join(responsiveHeaders(width), " | "))
 	for index, row := range rows {
 		prefix := "  "
 		if index == 0 {

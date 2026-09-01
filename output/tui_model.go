@@ -32,17 +32,13 @@ type resizeSettledMsg struct{ tag int }
 
 const newTabID = "new"
 
-// contentVersionColWidth is the fixed display width of the content table's
-// right-aligned Version column. It does not vary with terminal width; only
-// the Name column grows/shrinks to fill the available space.
-const contentVersionColWidth = 10
-
 type tuiModel struct {
 	tabs        []string
 	toolsBySrc  map[string][]model.Tool
 	sources     map[string]scanner.SourceInfo
 	activeTab   int
 	content     table.Model
+	baseRows    []InventoryRow
 	styles      ThemeStyles
 	filtering   bool
 	filterQuery string
@@ -83,6 +79,11 @@ type TUIOptions struct {
 	Version      string
 	Theme        config.ThemeSettings
 	ConfigPath   string
+
+	// UIMode is the config's ui.mode: "v2" for the eight kind-first tabs, "v3"
+	// for the four intent-first ones. Empty means v2, so every existing caller
+	// (and every test that passes TUIOptions{}) keeps the tabs it had.
+	UIMode string
 }
 
 // keyMap defines every key binding the TUI recognizes, satisfying
@@ -101,6 +102,11 @@ type keyMap struct {
 	Help    key.Binding
 	Theme   key.Binding
 	Quit    key.Binding
+
+	// reportTabs is the tab set the "?" digit list describes. FullHelp is a
+	// method on keyMap with no model to ask, so newObservationTUIModel hands
+	// the mode's resolved tabs here; nil (the legacy RunTUI path) means v2.
+	reportTabs []string
 }
 
 // defaultKeyMap is the TUI's fixed keybinding set.
@@ -123,7 +129,7 @@ var defaultKeyMap = keyMap{
 	),
 	JumpTab: key.NewBinding(
 		key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"),
-		key.WithHelp("1-9", "jump to tab"),
+		key.WithHelp("1-8", "jump to view"),
 	),
 	Filter: key.NewBinding(
 		key.WithKeys("/"),
@@ -164,12 +170,36 @@ func (k keyMap) ShortHelp() []key.Binding {
 }
 
 // FullHelp returns every binding, grouped into columns, for the expanded
-// help view toggled by "?".
+// help view toggled by "?". The last two columns are the view digits with what
+// each view *means*, so "?" answers "where do I find my Homebrew apps" and not
+// only "which key moves down".
 func (k keyMap) FullHelp() [][]key.Binding {
+	digits := viewHelpBindings(k.reportTabs)
+	split := (len(digits) + 1) / 2
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PrevTab, k.NextTab, k.JumpTab},
 		{k.Filter, k.Diff, k.Save, k.Help, k.Theme, k.Quit},
+		digits[:split],
+		digits[split:],
 	}
+}
+
+// viewHelpBindings renders one binding per report tab: the digit that jumps to
+// it, described by its plain-English label. An empty tab set means the caller
+// is the legacy per-source TUI, which still describes the v2 views.
+func viewHelpBindings(tabs []string) []key.Binding {
+	if len(tabs) == 0 {
+		tabs = reportTabsForMode(uiModeV2)
+	}
+	bindings := make([]key.Binding, 0, len(tabs))
+	for index, tab := range tabs {
+		digit := itoa(index + 1)
+		bindings = append(bindings, key.NewBinding(
+			key.WithKeys(digit),
+			key.WithHelp(digit, tabDisplayLabel(tab)),
+		))
+	}
+	return bindings
 }
 
 func newTUIModel(realTools, available, npxHistory []model.Tool, diff registry.Diff, warnings []scanner.Warning, options TUIOptions) tuiModel {
@@ -209,18 +239,27 @@ func newTUIModel(realTools, available, npxHistory []model.Tool, diff registry.Di
 		tabs = []string{model.SourceNPM}
 	}
 
+	baseRows := baseInventoryRows(toolsBySrc[tabs[0]], "")
+	// The bubbles table is no longer the renderer -- renderInventoryTable in
+	// tui_inventory_table.go draws every list so installed/available/broken
+	// can be colored per row, which bubbles/table's three-style API cannot
+	// express. It is retained purely as the cursor/scroll state machine for
+	// the legacy per-source view, which is why it gets rows but no styles.
 	t := table.New(
-		table.WithColumns(columnsFor(0)),
-		table.WithRows(rowsFor(toolsBySrc[tabs[0]], "")),
+		table.WithColumns([]table.Column{{Title: "Name", Width: 1}}),
+		table.WithRows(cursorRows(len(baseRows))),
 		table.WithFocused(true),
 	)
-	t.SetStyles(styles.Table)
+
+	helpModel := help.New()
+	helpModel.Styles = helpStyles(styles)
 
 	return tuiModel{
 		tabs:        tabs,
 		toolsBySrc:  toolsBySrc,
 		sources:     sources,
 		content:     t,
+		baseRows:    baseRows,
 		styles:      styles,
 		realTools:   realTools,
 		available:   available,
@@ -231,9 +270,30 @@ func newTUIModel(realTools, available, npxHistory []model.Tool, diff registry.Di
 		themeNames:  config.ThemePresets(),
 		configPath:  options.ConfigPath,
 		keys:        defaultKeyMap,
-		help:        help.New(),
+		help:        helpModel,
 		splashTimer: newSplashTimer(),
 	}
+}
+
+// helpStyles maps the bubbles help component onto the design system so the
+// footer hints share the footer's vocabulary instead of shipping their own.
+func helpStyles(styles ThemeStyles) help.Styles {
+	s := help.DefaultDarkStyles()
+	s.ShortKey, s.FullKey = styles.FooterKey, styles.FooterKey
+	s.ShortDesc, s.FullDesc = styles.Footer, styles.Footer
+	s.ShortSeparator, s.FullSeparator = styles.Footer, styles.Footer
+	s.Ellipsis = styles.Footer
+	return s
+}
+
+// cursorRows returns n placeholder rows. The bubbles table only needs a row
+// count to bound cursor movement; the visible cells come from baseRows.
+func cursorRows(n int) []table.Row {
+	rows := make([]table.Row, n)
+	for i := range rows {
+		rows[i] = table.Row{""}
+	}
+	return rows
 }
 
 func (m tuiModel) isInformationalTab(tab string) bool {
@@ -274,7 +334,7 @@ func (m *tuiModel) updateThemePicker(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.theme = theme
 		m.styles = NewThemeStyles(theme)
-		m.content.SetStyles(m.styles.Table)
+		m.help.Styles = helpStyles(m.styles)
 		m.themePicker = false
 		if err := config.SaveTheme(m.configPath, theme); err != nil {
 			m.statusMsg = "theme applied, save failed: " + err.Error()
@@ -296,20 +356,27 @@ func (m tuiModel) renderThemePicker() string {
 		height = 24
 	}
 
-	lines := []string{m.styles.HeaderTitle.Render("Choose a theme"), ""}
+	lines := []string{m.styles.DetailHeading.Render("Choose a theme"), ""}
 	for i, name := range m.themeNames {
 		preview, err := config.ThemeSettingsForPreset(name)
 		if err != nil {
 			continue
 		}
 		previewStyles := NewThemeStyles(preview)
-		label := "  " + name
+		// Each row previews its own palette: the accent swatch on the left,
+		// then the three semantic status tones the row colors use.
+		swatches := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			previewStyles.RowInstalled.Render(previewStyles.Glyph.Installed),
+			previewStyles.RowAvailable.Render(previewStyles.Glyph.Available),
+			previewStyles.RowBroken.Render(previewStyles.Glyph.Broken),
+		)
+		marker, label := " ", previewStyles.Tab.Render(name)
 		if i == m.themeIndex {
-			label = "▸ " + name
-			lines = append(lines, previewStyles.ActiveTab.Render(label))
-		} else {
-			lines = append(lines, previewStyles.Tab.Render(label))
+			marker = previewStyles.SelectionBar.Render(previewStyles.Glyph.Selection)
+			label = previewStyles.ActiveTab.Render(name)
 		}
+		lines = append(lines, lipgloss.JoinHorizontal(lipgloss.Top, marker, " ", swatches, "  ", label))
 	}
 	lines = append(lines, "", m.styles.Footer.Render("↑/↓ choose · enter apply · esc cancel"))
 
@@ -320,7 +387,7 @@ func (m tuiModel) renderThemePicker() string {
 	if panelWidth < 12 {
 		panelWidth = 12
 	}
-	panel := m.styles.Panel.Width(panelWidth).Render(strings.Join(lines, "\n"))
+	panel := m.styles.Modal.Width(panelWidth).Render(strings.Join(lines, "\n"))
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, panel)
 }
 
@@ -335,55 +402,41 @@ func versionOrPath(t model.Tool) string {
 	return t.Path
 }
 
-// columnsFor returns the content table's columns sized for the given pane
-// width: a fixed-width Version column and a Name column that fills the
-// remaining space.
-func columnsFor(width int) []table.Column {
-	nameWidth := width - contentVersionColWidth - 4
-	if nameWidth < 4 {
-		nameWidth = 4
-	}
-	return []table.Column{
-		{Title: "Name", Width: nameWidth},
-		{Title: "Version", Width: contentVersionColWidth},
-	}
-}
-
-// rowsFor builds the content table's rows for tools, keeping only those
-// whose name case-insensitively contains filter (all tools when filter is
-// empty). The version cell is pre-padded to contentVersionColWidth so it
-// renders right-aligned, since bubbles/table has no built-in alignment.
-func rowsFor(tools []model.Tool, filter string) []table.Row {
+// baseInventoryRows builds the legacy per-source view's rows, keeping only
+// those whose name case-insensitively contains filter. Routing them through
+// InventoryRow is what lets the legacy pane share the semantic per-row
+// coloring and the Status/Source columns with the v2 report pane.
+func baseInventoryRows(tools []model.Tool, filter string) []InventoryRow {
 	lowerFilter := strings.ToLower(filter)
-	rows := make([]table.Row, 0, len(tools))
+	rows := make([]InventoryRow, 0, len(tools))
 	for _, t := range tools {
 		if filter != "" && !strings.Contains(strings.ToLower(t.Name), lowerFilter) {
 			continue
 		}
-		val := versionOrPath(t)
+		row := InventoryRowFromObservation(t.ToObservation())
 		if t.Version == "" {
-			// Path fallback: right-truncate (keep the tail) so the more
-			// identifying suffix (e.g. the binary name) survives, instead
-			// of showing an undifferentiated "/opt/homebrew/…" prefix.
-			val = truncateTail(val, contentVersionColWidth)
+			// Path fallback: the location is more informative than a bare
+			// "unknown" here, and truncateTail keeps its identifying suffix.
+			row.Version = versionOrPath(t)
 		}
-		rows = append(rows, table.Row{t.Name, rightAlign(val, contentVersionColWidth)})
+		rows = append(rows, row)
 	}
 	return rows
 }
 
-// rebuildContent recomputes the content table's rows for the active tab
-// under the current filter query, resetting the cursor to the top.
+// rebuildContent recomputes the content rows for the active tab under the
+// current filter query, resetting the cursor to the top.
 func (m *tuiModel) rebuildContent() {
-	m.content.SetRows(rowsFor(m.toolsBySrc[m.tabs[m.activeTab]], m.filterQuery))
+	m.baseRows = baseInventoryRows(m.toolsBySrc[m.tabs[m.activeTab]], m.filterQuery)
+	m.content.SetRows(cursorRows(len(m.baseRows)))
 	m.content.SetCursor(0)
 }
 
-// resizeContent recalculates the content table's columns, width, and
-// height for the current terminal size and footer state. The footer's row
-// count varies (1 normally, more when the full key-binding help is
-// expanded via "?"), so this must be called both on every WindowSizeMsg
-// and whenever something else could change the footer's line count.
+// resizeContent recalculates the cursor viewport's width and height for the
+// current terminal size and footer state. The footer's row count varies (1
+// normally, more when the full key-binding help is expanded via "?"), so this
+// must be called both on every WindowSizeMsg and whenever something else could
+// change the footer's line count.
 func (m *tuiModel) resizeContent() {
 	footerRows := len(m.footerLines())
 	if m.width > 0 && m.width < compactWidthThreshold {
@@ -392,27 +445,68 @@ func (m *tuiModel) resizeContent() {
 		if h < 1 {
 			h = 1
 		}
-		if m.report != nil {
-			m.content.SetColumns(reportColumnsFor(m.width))
-			m.content.SetRows(reportTableRows(m.report.rows, m.width))
-		} else {
-			m.content.SetColumns(columnsFor(m.width))
-		}
 		m.content.SetWidth(m.width)
 		m.content.SetHeight(h)
 		return
 	}
-	m.help.SetWidth(m.width - 4)
-	sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
-	cWidth := contentPaneWidth(m.width, sbWidth)
+	m.help.SetWidth(m.width - frameFooterChrome(m.styles))
+	m.content.SetWidth(m.contentWidth())
+	m.content.SetHeight(contentPaneHeight(m.frameHeight(), footerRows))
+}
+
+// contentLines renders the content pane as exactly height lines of exactly
+// width cells. It is the single entry point both the bordered frame and the
+// compact layout use, so the two never drift apart.
+func (m tuiModel) contentLines(width, height int) []string {
 	if m.report != nil {
-		m.content.SetColumns(reportColumnsFor(cWidth))
-		m.content.SetRows(reportTableRows(m.report.rows, cWidth))
-	} else {
-		m.content.SetColumns(columnsFor(cWidth))
+		return m.reportContentLines(width, height)
 	}
-	m.content.SetWidth(cWidth)
-	m.content.SetHeight(contentPaneHeight(m.height, footerRows))
+	return padPane(m.inventoryPane(m.baseRows, m.content.Cursor(), width, height), width, height)
+}
+
+// inventoryPane renders a flat list plus its under-full row-count badge.
+func (m tuiModel) inventoryPane(rows []InventoryRow, selected, width, height int) []string {
+	return m.paneForRows(rows, selected, width, height, false)
+}
+
+// groupedInventoryPane renders a list broken into counted manager sub-groups,
+// used by the kind-first views where a flat count ("79 packages") is not a fact
+// anyone can act on.
+func (m tuiModel) groupedInventoryPane(rows []InventoryRow, selected, width, height int) []string {
+	return m.paneForRows(rows, selected, width, height, true)
+}
+
+func (m tuiModel) paneForRows(rows []InventoryRow, selected, width, height int, grouped bool) []string {
+	if len(rows) == 0 {
+		return []string{fitWidth(m.styles.EmptyState.Render("nothing to show here"), width)}
+	}
+	var lines []string
+	var used int
+	if grouped {
+		lines, used = renderGroupedInventoryTable(rows, selected, width, height, m.styles), groupedInventoryLineCount(rows)
+	} else {
+		lines, used = renderInventoryTable(rows, selected, width, height, m.styles), len(rows)+1
+	}
+	// A view that doesn't fill the pane gets an explicit count on its last
+	// line, so blank space below a short list reads as "that's all of them"
+	// rather than as a rendering failure.
+	if used < height {
+		lines[height-1] = renderRowCountBadge(len(rows), len(rows), width, m.styles)
+	}
+	return lines
+}
+
+// padPane trims or pads lines to exactly height rows of exactly width cells.
+func padPane(lines []string, width, height int) []string {
+	out := make([]string, height)
+	for i := range out {
+		if i < len(lines) {
+			out[i] = fitWidth(lines[i], width)
+			continue
+		}
+		out[i] = fitWidth("", width)
+	}
+	return out
 }
 
 func (m tuiModel) Init() tea.Cmd { return m.splashTimer.Init() }
@@ -609,11 +703,17 @@ func (m tuiModel) footerHint() string {
 // renderer.
 func (m tuiModel) footerLines() []string {
 	var lines []string
+	// Severity first, and visually distinct from the hints: a warning row is
+	// glyph-prefixed and bold-amber, a hint row is plain muted. The eye has to
+	// be able to find a real problem without reading the keybindings.
+	warn := func(text string) string {
+		return m.styles.Warning.Render(m.styles.Glyph.Warning + " warning: " + text)
+	}
 	for _, w := range m.warnings {
-		lines = append(lines, m.styles.Warning.Render(fmt.Sprintf("warning: %s: %v", w.Source, w.Err)))
+		lines = append(lines, warn(fmt.Sprintf("%s: %v", w.Source, w.Err)))
 	}
 	for _, warning := range m.reportWarnings {
-		lines = append(lines, m.styles.Warning.Render("warning: "+warning))
+		lines = append(lines, warn(warning))
 	}
 	if m.statusMsg != "" {
 		lines = append(lines, m.styles.Status.Render(m.statusMsg))
@@ -633,12 +733,17 @@ func (m tuiModel) View() tea.View {
 	if m.themePicker {
 		body = m.renderThemePicker()
 	} else if m.width > 0 && m.width < compactWidthThreshold {
-		footer := strings.Join(m.footerLines(), "\n")
-		content := m.content.View()
-		if m.report != nil {
-			content = strings.Join(m.reportContentLines(), "\n")
+		footerLines := m.footerLines()
+		height := m.frameHeight() - 1 - len(footerLines)
+		if height < 1 {
+			height = 1
 		}
-		body = m.renderCompact() + "\n" + content + "\n" + footer
+		body = lipgloss.JoinVertical(
+			lipgloss.Left,
+			m.renderCompact(),
+			lipgloss.JoinVertical(lipgloss.Left, m.contentLines(m.frameWidth(), height)...),
+			lipgloss.JoinVertical(lipgloss.Left, footerLines...),
+		)
 	} else {
 		body = m.renderFrame()
 	}
