@@ -53,21 +53,10 @@ func newReportTUIModel(report ObservationReport, mode string) reportTUIModel {
 	return model
 }
 
-// UI mode ids, matching config's ui.mode values, and the v3 tab ids.
-//
-// The v3 ids are plain strings rather than ViewCategory constants because those
-// constants -- ViewManage/ViewDiscover/ViewReview/ViewHealth -- and their
-// kinds.go labels land in the next change. Until they do, a v3 tab has no
-// predicate of its own: observationsForView falls through to its default, so
-// every v3 tab lists the whole inventory. The wiring is real, the panes are not.
+// UI mode ids, matching config's ui.mode values.
 const (
 	uiModeV2 = "v2"
 	uiModeV3 = "v3"
-
-	v3TabManage   = "manage"
-	v3TabDiscover = "discover"
-	v3TabReview   = "review"
-	v3TabHealth   = "health"
 )
 
 // v2ReportTabs is the kind-first navigation, ordered most useful first. It leads
@@ -88,10 +77,10 @@ var v2ReportTabs = []string{
 // v3ReportTabs is the intent-first navigation: four tabs named for what the user
 // came to do, not for what kind of thing a row is.
 var v3ReportTabs = []string{
-	v3TabManage,
-	v3TabDiscover,
-	v3TabReview,
-	v3TabHealth,
+	string(ViewManage),
+	string(ViewDiscover),
+	string(ViewReview),
+	string(ViewHealth),
 }
 
 // reportTabsForMode is the tab set for a config ui.mode value. The returned
@@ -167,7 +156,7 @@ func reportTabIndex(mode string, view ViewCategory) int {
 		return 0
 	}
 	if mode == uiModeV3 {
-		fallback = ViewCategory(v3TabDiscover)
+		fallback = ViewDiscover
 	}
 	for index, tab := range tabs {
 		if tab == string(fallback) {

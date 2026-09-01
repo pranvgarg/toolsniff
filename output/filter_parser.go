@@ -107,9 +107,17 @@ func validStatus(status Status) bool {
 	}
 }
 
+// validView accepts both the kind-first tab views and the status lenses. The
+// lenses are no longer tabs, so `view:installed` in the filter drawer is now
+// the way back to them -- keeping them parseable is what makes the tab
+// reorganisation lossless.
 func validView(view ViewCategory) bool {
 	switch view {
-	case ViewAll, ViewInstalled, ViewAvailable, ViewChanges, ViewIssues, ViewHistory:
+	case ViewOverview, ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory:
+		return true
+	case ViewManage, ViewDiscover, ViewReview, ViewHealth:
+		return true
+	case ViewAll, ViewInstalled, ViewAvailable, ViewHistory, ViewChanges, ViewIssues:
 		return true
 	default:
 		return false

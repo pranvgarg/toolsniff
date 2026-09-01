@@ -11,12 +11,33 @@ import (
 type ViewCategory string
 
 const (
+	// Kind-first views. These are the primary navigation: what a thing *is*
+	// comes before what state it is in. See output/kinds.go for the plain
+	// meaning of each one.
+	ViewOverview        ViewCategory = "overview"
+	ViewCLI             ViewCategory = "cli-tools"
+	ViewPackages        ViewCategory = "packages"
+	ViewApplications    ViewCategory = "applications"
+	ViewPathExecutables ViewCategory = "path-executables"
+	ViewNpxHistory      ViewCategory = "npx-history"
+
+	// Intent-first views (ui.mode "v3"). These replace the kind-first tabs
+	// when enabled. See output/kinds.go for their plain meaning.
+	ViewManage   ViewCategory = "manage"
+	ViewDiscover ViewCategory = "discover"
+	ViewReview   ViewCategory = "review"
+	ViewHealth   ViewCategory = "health"
+
+	// Status lenses. These are no longer tabs, but every one of them remains
+	// reachable through the filter drawer and the `view:` filter facet, so the
+	// kind-first reorganisation removes no way of looking at the data.
 	ViewAll       ViewCategory = "all"
 	ViewInstalled ViewCategory = "installed"
 	ViewAvailable ViewCategory = "available"
-	ViewChanges   ViewCategory = "changes"
-	ViewIssues    ViewCategory = "issues"
 	ViewHistory   ViewCategory = "history"
+
+	ViewChanges ViewCategory = "changes"
+	ViewIssues  ViewCategory = "issues"
 )
 
 // FilterState contains visual facets and the optional plain-text query. A map
@@ -132,20 +153,73 @@ func FilterRows(rows []InventoryRow, state FilterState) []InventoryRow {
 func FilterReport(report ObservationReport, state FilterState) []InventoryRow {
 	state = state.normalized()
 	if state.View != ViewChanges && state.View != ViewIssues {
-		var observations []model.Observation
-		switch state.View {
-		case ViewInstalled:
-			observations = report.Installed
-		case ViewAvailable:
-			observations = report.Available
-		case ViewHistory:
-			observations = report.History
-		default:
-			observations = report.AllObservations()
+		rows := FilterRows(InventoryRows(FilterObservations(observationsForView(report, state.View), state)), state)
+		if groupedView(state.View) {
+			// A grouped pane renders manager sub-headings, which is only
+			// coherent if each manager's rows are contiguous. Sorting here (not
+			// in the renderer) keeps the flat selection index and the rendered
+			// blocks describing the same order.
+			rows = sortRowsByGroup(rows)
 		}
-		return FilterRows(InventoryRows(FilterObservations(observations, state)), state)
+		return rows
 	}
 	return FilterRows(RowsForReport(report, state.View), state)
+}
+
+// observationsForView narrows the report to one view's observations. The status
+// lenses read the report's own buckets; the kind-first views run the shared
+// predicate over everything, so a kind tab is never limited to one bucket.
+func observationsForView(report ObservationReport, view ViewCategory) []model.Observation {
+	switch view {
+	case ViewInstalled:
+		return report.Installed
+	case ViewAvailable:
+		return report.Available
+	case ViewHistory:
+		return report.History
+	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory:
+		all := report.AllObservations()
+		matching := make([]model.Observation, 0, len(all))
+		for _, observation := range all {
+			if observationMatchesView(observation, view) {
+				matching = append(matching, observation)
+			}
+		}
+		return matching
+	default:
+		return report.AllObservations()
+	}
+}
+
+// CountForView is the number of observations a view holds. Tab counts, the
+// overview, and the pane caption all read it, so no two of them can disagree.
+func CountForView(report ObservationReport, view ViewCategory) int {
+	switch view {
+	case ViewChanges:
+		return len(report.Changes.Events())
+	case ViewIssues:
+		return len(report.Changes.Broken) + len(report.Changes.Shadowed)
+	case ViewOverview:
+		return len(report.AllObservations())
+	default:
+		return len(observationsForView(report, view))
+	}
+}
+
+// sortRowsByGroup orders rows by manager group, then by name inside a group.
+func sortRowsByGroup(rows []InventoryRow) []InventoryRow {
+	sorted := append([]InventoryRow(nil), rows...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := sourceGroupRank(sorted[i].Source), sourceGroupRank(sorted[j].Source)
+		if left != right {
+			return left < right
+		}
+		if sorted[i].Source != sorted[j].Source {
+			return sorted[i].Source < sorted[j].Source
+		}
+		return strings.ToLower(sorted[i].Name) < strings.ToLower(sorted[j].Name)
+	})
+	return sorted
 }
 
 // FilterChip is a removable visual representation of one active constraint.
