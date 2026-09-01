@@ -167,8 +167,12 @@ func FilterReport(report ObservationReport, state FilterState) []InventoryRow {
 }
 
 // observationsForView narrows the report to one view's observations. The status
-// lenses read the report's own buckets; the kind-first views run the shared
-// predicate over everything, so a kind tab is never limited to one bucket.
+// lenses read the report's own buckets; the kind-first views and the intent
+// views built from them run the shared predicate over everything, so a tab is
+// never limited to one bucket. Views absent from the switch fall through to the
+// whole report, which is why an intent view must be listed here: Manage showing
+// everything, PATH executables included, would be a lie about what a manager
+// can act on.
 func observationsForView(report ObservationReport, view ViewCategory) []model.Observation {
 	switch view {
 	case ViewInstalled:
@@ -177,7 +181,7 @@ func observationsForView(report ObservationReport, view ViewCategory) []model.Ob
 		return report.Available
 	case ViewHistory:
 		return report.History
-	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory:
+	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory, ViewManage:
 		all := report.AllObservations()
 		matching := make([]model.Observation, 0, len(all))
 		for _, observation := range all {

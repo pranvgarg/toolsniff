@@ -304,6 +304,11 @@ func (m tuiModel) reportContentLines(width, height int) []string {
 		lines = append(lines, m.styles.EmptyState.Render(message))
 	case m.report.state.View == ViewChanges || m.report.state.View == ViewIssues:
 		lines = append(lines, renderChangeLines(m.report.report.Changes, m.styles)...)
+	case m.report.state.View == ViewManage:
+		// Ahead of the general grouped case: Manage is a grouped view, but it
+		// owns its own renderer so the intent views can diverge from the
+		// kind-first panes without disturbing them.
+		lines = append(lines, renderManageRows(m.report.rows, m.report.selected, width, body, m.styles)...)
 	case groupedView(m.report.state.View):
 		lines = append(lines, m.groupedInventoryPane(m.report.rows, m.report.selected, width, body)...)
 	default:
