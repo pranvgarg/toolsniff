@@ -180,6 +180,11 @@ type InventoryRow struct {
 	Status        string
 	Source        string
 	Kind          string
+	// Action is the label of the entry's primary runnable action, resolved once
+	// here rather than per frame: list views repaint on every keystroke, and a
+	// row is copied by every filter and sort along the way. Empty when the entry
+	// has nothing runnable.
+	Action string
 }
 
 // InventoryRows converts observations to responsive presentation data in one
@@ -192,22 +197,17 @@ func InventoryRows(observations []model.Observation) []InventoryRow {
 	return rows
 }
 
-// RowsForReport returns rows for the selected primary view.
+// RowsForReport returns rows for the selected primary view, including the
+// kind-first views (see output/kinds.go) and the status lenses they replaced.
 func RowsForReport(report ObservationReport, view ViewCategory) []InventoryRow {
-	var observations []model.Observation
-	switch view {
-	case ViewInstalled:
-		observations = report.Installed
-	case ViewAvailable:
-		observations = report.Available
-	case ViewHistory:
-		observations = report.History
-	case ViewChanges, ViewIssues:
+	if view == ViewChanges || view == ViewIssues {
 		return rowsForEvents(report.Changes, view)
-	default:
-		observations = report.AllObservations()
 	}
-	return InventoryRows(observations)
+	rows := InventoryRows(observationsForView(report, view))
+	if groupedView(view) {
+		rows = sortRowsByGroup(rows)
+	}
+	return rows
 }
 
 // InventoryRowFromObservation makes version and status states explicit.
@@ -220,6 +220,7 @@ func InventoryRowFromObservation(observation model.Observation) InventoryRow {
 		Status:        ObservationStatus(observation),
 		Source:        ObservationSource(observation),
 		Kind:          string(observation.Kind),
+		Action:        PrimaryActionLabel(observation),
 	}
 }
 
