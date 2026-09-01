@@ -28,6 +28,11 @@ const (
 	ViewReview   ViewCategory = "review"
 	ViewHealth   ViewCategory = "health"
 
+	// ViewUpdates is a lens rather than a tab: the entries a package manager
+	// could upgrade in place. The Health dashboard counts it, and the filter
+	// drawer can reach it, but nothing in the tab strip owns it.
+	ViewUpdates ViewCategory = "updates"
+
 	// Status lenses. These are no longer tabs, but every one of them remains
 	// reachable through the filter drawer and the `view:` filter facet, so the
 	// kind-first reorganisation removes no way of looking at the data.
@@ -189,7 +194,7 @@ func observationsForView(report ObservationReport, view ViewCategory) []model.Ob
 		// which would hand back the whole report -- Review claiming every
 		// entry on the machine would be a lie about what needs attention.
 		return []model.Observation{}
-	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory, ViewManage, ViewDiscover:
+	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory, ViewManage, ViewDiscover, ViewUpdates:
 		all := report.AllObservations()
 		matching := make([]model.Observation, 0, len(all))
 		for _, observation := range all {

@@ -259,6 +259,33 @@ func observationMatchesView(observation model.Observation, view ViewCategory) bo
 			(observation.Kind == model.KindExecutable && !managerInstalled(observation))
 	case ViewNpxHistory:
 		return observation.Kind == model.KindHistory
+	case ViewDiscover:
+		// Discover is Manage's complement, and is built the same way: a union of
+		// kind views rather than a fresh predicate, so "nothing a manager
+		// installed" cannot drift from the two tabs it replaces.
+		for _, kind := range discoverViews {
+			if observationMatchesView(observation, kind) {
+				return true
+			}
+		}
+		return false
+	case ViewUpdates:
+		// "Can a manager upgrade this in place?", which is a question the action
+		// vocabulary already answers. Deliberately *not* "is a newer version
+		// available": model.VersionState knows only whether a version could be
+		// read, so no scanner on this machine has ever compared one against a
+		// registry, and a card claiming otherwise would be inventing its number.
+		return updatable(observation)
+	case ViewManage:
+		// Manage is a union of kind views rather than a predicate of its own, so
+		// "everything a manager installed" can never disagree with the three
+		// tabs it replaces.
+		for _, kind := range manageViews {
+			if observationMatchesView(observation, kind) {
+				return true
+			}
+		}
+		return false
 	case ViewInstalled:
 		return observation.Role == model.RoleInstalled
 	case ViewAvailable:
@@ -273,6 +300,19 @@ func observationMatchesView(observation model.Observation, view ViewCategory) bo
 // kindViews are the primary, "what is this thing" views. Together they cover
 // every observation in a report.
 var kindViews = []ViewCategory{ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory}
+
+// manageViews are the kind views the Manage tab unions. What a manager
+// installed can arrive as a terminal command, as a package with no command, or
+// as a .app; to the person deciding what to update or remove those are one
+// list. The two kind views left out are the ones no manager owns: hand-placed
+// PATH executables and the npx cache.
+var manageViews = []ViewCategory{ViewCLI, ViewPackages, ViewApplications}
+
+// discoverViews are exactly the two kind views manageViews leaves out: the
+// programs a user placed on their PATH themselves and the npx cache. Together
+// the two unions cover every observation, so nothing falls between the Manage
+// and Discover tabs.
+var discoverViews = []ViewCategory{ViewPathExecutables, ViewNpxHistory}
 
 // ViewLabel is the short human title for a view, used by the tab strip and the
 // pane caption.
@@ -304,6 +344,8 @@ func ViewLabel(view ViewCategory) string {
 		return "Review"
 	case ViewHealth:
 		return "Health"
+	case ViewUpdates:
+		return "Updatable"
 	default:
 		return "Everything"
 	}
@@ -339,10 +381,40 @@ func ViewMeaning(view ViewCategory) string {
 		return "what changed and what needs fixing"
 	case ViewHealth:
 		return "updates, issues, and reclaimable space at a glance"
+	case ViewUpdates:
+		// Not "an update is waiting". The word this gloss exists to keep honest
+		// is "updatable": a manager owns the entry and offers an upgrade
+		// command, which is a fact about the manager, not about a newer release.
+		return "a manager can upgrade these in place"
 	default:
 		return "every command, package, and app found"
 	}
 }
+
+// --- the Health cards ------------------------------------------------------
+//
+// Health (ui.mode "v3") is the "is this machine healthy and up to date" pane.
+// Three of its four cards are counts of views defined above, so they read from
+// the same vocabulary as every tab. The fourth has no view behind it yet, and
+// the wording below is what keeps that visible rather than papered over.
+
+const (
+	// healthReclaimableLabel titles the disk card. The measurement behind it
+	// (caches, orphaned prefixes, leftovers) is not yet scanned, so the card
+	// shows healthUnknownValue instead of a number.
+	healthReclaimableLabel = "Reclaimable"
+	// healthReclaimableMeaning says what the card will hold and, in the same
+	// breath, that it is not measured yet -- a gloss reading "disk you could
+	// free" beside a dash would look like a scan that found nothing.
+	healthReclaimableMeaning = "caches and leftovers — not measured yet"
+	// healthUnknownValue is what a card shows in place of a count it cannot
+	// truthfully produce. A dash, never a zero: "0" is a measurement.
+	healthUnknownValue = "—"
+	// healthCopyKey is the key the report TUI binds to "yank this entry's first
+	// action command" (the "y" case in output/tui_v2.go). Named here so the
+	// Health footer cannot advertise a key the shell does not bind.
+	healthCopyKey = "y"
+)
 
 // StatusDisplayLabel is the human wording for a status in the TUI's own
 // surfaces. "available" is the scanner's word for "your shell can run this, but
@@ -366,6 +438,76 @@ func StatusDisplayLabel(status string) string {
 // ViewCaption is the pane's first line: title, count, meaning.
 func ViewCaption(view ViewCategory, count int) string {
 	return ViewLabel(view) + " · " + itoa(count) + " · " + ViewMeaning(view)
+}
+
+// --- the Review sections ---------------------------------------------------
+//
+// Review (ui.mode "v3") consolidates everything that needs a decision. Its
+// material is the typed change events, which arrive in seven categories, and
+// the sections below partition those seven into the three questions a user
+// actually asks. The partition is exhaustive and disjoint: every category
+// belongs to exactly one section, so no event is rendered twice and the tab
+// count is simply the number of events.
+
+// reviewSection is one block of the Review pane: a heading, its gloss, and the
+// row statuses it claims. Statuses -- not change kinds -- because that is what
+// a rendered row carries by the time it reaches the pane.
+type reviewSection struct {
+	// Key identifies the block. It is what consecutive rows are compared on to
+	// decide where one block ends and the next begins.
+	Key string
+	// Label is the heading, and Meaning the gloss appended when it fits.
+	Label   string
+	Meaning string
+	// Statuses are the row statuses this block holds, in render order.
+	Statuses []Status
+}
+
+// reviewNewLabel and reviewNewMeaning are the one piece of wording Review adds
+// to this file. The other two blocks are the Changes and Issues views under
+// their own names, but "present now, absent from the last saved baseline" had
+// no heading of its own: in the v2 change list it is the ADDED category, which
+// names the event rather than what the user is looking at. Its gloss is
+// deliberately the narrower half of ViewMeaning(ViewChanges) -- this block is
+// the new arrivals specifically, not everything that moved since the baseline.
+const (
+	reviewNewLabel   = "New"
+	reviewNewMeaning = "not in the last saved baseline"
+)
+
+// reviewSections is the Review pane's block order and the single source of the
+// order its rows are built in, so the flat selection index and the rendered
+// blocks always describe the same list. Every Status a change event can carry
+// appears exactly once across the three blocks.
+var reviewSections = []reviewSection{{
+	Key:      string(ViewChanges),
+	Label:    ViewLabel(ViewChanges),
+	Meaning:  ViewMeaning(ViewChanges),
+	Statuses: []Status{StatusRemoved, StatusUpdated, StatusRelocated, StatusRepaired},
+}, {
+	Key:      string(ViewIssues),
+	Label:    ViewLabel(ViewIssues),
+	Meaning:  ViewMeaning(ViewIssues),
+	Statuses: []Status{StatusBroken, StatusShadowed},
+}, {
+	Key:      reviewNewLabel,
+	Label:    reviewNewLabel,
+	Meaning:  reviewNewMeaning,
+	Statuses: []Status{StatusAdded},
+}}
+
+// reviewSectionFor returns the block a row status belongs to. A status no
+// section claims gets the zero value, whose empty Key groups it into one
+// trailing unlabelled block rather than silently dropping the row.
+func reviewSectionFor(status Status) reviewSection {
+	for _, section := range reviewSections {
+		for _, claimed := range section.Statuses {
+			if claimed == status {
+				return section
+			}
+		}
+	}
+	return reviewSection{}
 }
 
 // --- manager sub-groups ----------------------------------------------------
@@ -418,6 +560,17 @@ var sourceGroupOrder = map[string]int{
 	model.SourcePath:         99,
 }
 
+// discoverGroupOrder is the Discover pane's block order, and deliberately not
+// sourceGroupOrder's. That order ranks SourcePath last because a hand-placed
+// program is the least actionable entry in Manage. In Discover it is the whole
+// point of the view, and the npx cache -- which the user never chose to put
+// anywhere -- is the residue that trails instead. A block headed by a directory
+// ranks as the PATH entries it holds.
+var discoverGroupOrder = map[string]int{
+	model.SourcePath:       1,
+	model.SourceNPXHistory: 2,
+}
+
 // sourceGroupKey normalizes a row's source to a known group. A provider the
 // vocabulary has not been taught (ObservationSource renders those as
 // "provider-manager") is folded onto its provider rather than becoming its own
@@ -457,7 +610,47 @@ func sourceGroupRank(source string) int {
 	return 100
 }
 
-// groupedView reports whether a view renders manager sub-group headings.
+// originSourceKeys links the two classifications this file already maintains:
+// the origin keys, which name who installed a thing, and the source labels,
+// which sourceGroupOrder ranks. A caller holding an origin -- Discover, picking
+// the manager that owns the most of the machine -- would otherwise have to
+// invent a precedence of its own rather than reading the one order here.
+var originSourceKeys = map[string]string{
+	originNPM:          model.SourceNPM,
+	originBrewFormula:  model.SourceBrewFormula,
+	originBrewCask:     model.SourceBrewCask,
+	originCargo:        model.SourceCargo,
+	originPipx:         model.SourcePipx,
+	originBun:          model.SourceBun,
+	originApplications: model.SourceApplications,
+	originPath:         model.SourcePath,
+	originNPX:          model.SourceNPXHistory,
+}
+
+// originGroupRank is sourceGroupRank addressed by origin key.
+func originGroupRank(origin string) int {
+	return sourceGroupRank(originSourceKeys[origin])
+}
+
+// DiscoverSuggestionLine is the Discover pane's footer: one sentence naming a
+// concrete next step for an entry no manager owns. The command is supplied by
+// the caller from the install templates in output/actions.go, so this function
+// only chooses the wording -- and with no template to offer it says the smaller
+// true thing rather than naming a manager that could not install the entry.
+func DiscoverSuggestionLine(name string, command []string) string {
+	if name == "" {
+		return ""
+	}
+	if len(command) == 0 {
+		return "Tip: " + name + " is on your PATH but not managed by any package manager."
+	}
+	return "Tip: " + strings.Join(command, " ") + " would bring " + name + " under management."
+}
+
+// groupedView reports whether a view renders manager sub-group headings. It
+// also decides where the rows are sorted into manager order -- in FilterReport,
+// not in the renderer -- so the flat selection index and the rendered blocks
+// always describe the same order.
 func groupedView(view ViewCategory) bool {
-	return view == ViewCLI || view == ViewPackages
+	return view == ViewCLI || view == ViewPackages || view == ViewManage
 }
