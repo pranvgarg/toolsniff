@@ -1,11 +1,33 @@
 package output
 
 import (
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/pranvgarg/toolsniff/model"
 )
+
+func TestManagerPriorityOrder(t *testing.T) {
+	// Lower rank = earlier in the Manage tab. npm leads; manual PATH trails.
+	want := []string{
+		model.SourceNPM, model.SourceBrewFormula, model.SourceBrewCask,
+		model.SourceCargo, model.SourcePipx, model.SourceBun,
+		model.SourceApplications, model.SourceNPXHistory, model.SourcePath,
+	}
+	got := append([]string(nil), want...)
+	sort.Slice(got, func(i, j int) bool {
+		return sourceGroupRank(got[i]) < sourceGroupRank(got[j])
+	})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manager order = %v, want %v", got, want)
+	}
+	// An unknown source must rank after everything known.
+	if sourceGroupRank("unknown-provider-thing") <= sourceGroupRank(model.SourcePath) {
+		t.Fatal("unknown source should rank after manual PATH")
+	}
+}
 
 func TestV3ViewsHavePlainDefinitions(t *testing.T) {
 	for _, v := range []ViewCategory{ViewManage, ViewDiscover, ViewReview, ViewHealth} {

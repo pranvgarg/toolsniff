@@ -402,7 +402,10 @@ var sourceGroupMeanings = map[string]string{
 }
 
 // sourceGroupOrder puts the groups in the order a user cares about them:
-// the manager that owns the most of a machine first, the residue last.
+// the manager that owns the most of a machine first, the residue last. Manual
+// PATH entries (SourcePath) trail everything because they are the least
+// actionable group in the Manage view. Unknown sources rank last so new
+// managers never displace the established order.
 var sourceGroupOrder = map[string]int{
 	model.SourceNPM:          1,
 	model.SourceBrewFormula:  2,
@@ -411,8 +414,8 @@ var sourceGroupOrder = map[string]int{
 	model.SourcePipx:         5,
 	model.SourceBun:          6,
 	model.SourceApplications: 7,
-	model.SourcePath:         8,
-	model.SourceNPXHistory:   9,
+	model.SourceNPXHistory:   8,
+	model.SourcePath:         99,
 }
 
 // sourceGroupKey normalizes a row's source to a known group. A provider the
@@ -451,7 +454,7 @@ func sourceGroupRank(source string) int {
 	if rank, ok := sourceGroupOrder[sourceGroupKey(source)]; ok {
 		return rank
 	}
-	return 99
+	return 100
 }
 
 // groupedView reports whether a view renders manager sub-group headings.
