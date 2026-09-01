@@ -154,14 +154,7 @@ func FilterReport(report ObservationReport, state FilterState) []InventoryRow {
 	state = state.normalized()
 	if state.View != ViewChanges && state.View != ViewIssues {
 		rows := FilterRows(InventoryRows(FilterObservations(observationsForView(report, state.View), state)), state)
-		if groupedView(state.View) {
-			// A grouped pane renders manager sub-headings, which is only
-			// coherent if each manager's rows are contiguous. Sorting here (not
-			// in the renderer) keeps the flat selection index and the rendered
-			// blocks describing the same order.
-			rows = sortRowsByGroup(rows)
-		}
-		return rows
+		return sortRowsForView(rows, state.View)
 	}
 	return FilterRows(RowsForReport(report, state.View), state)
 }
@@ -181,7 +174,7 @@ func observationsForView(report ObservationReport, view ViewCategory) []model.Ob
 		return report.Available
 	case ViewHistory:
 		return report.History
-	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory, ViewManage:
+	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory, ViewManage, ViewDiscover:
 		all := report.AllObservations()
 		matching := make([]model.Observation, 0, len(all))
 		for _, observation := range all {
@@ -207,6 +200,24 @@ func CountForView(report ObservationReport, view ViewCategory) int {
 		return len(report.AllObservations())
 	default:
 		return len(observationsForView(report, view))
+	}
+}
+
+// sortRowsForView puts a view's rows in the order its pane draws them. Any
+// pane that renders sub-headings is only coherent if each block's rows are
+// contiguous, and sorting here rather than in the renderer keeps the flat
+// selection index and the rendered blocks describing the same order. A view
+// with no sub-headings keeps the report's own order.
+func sortRowsForView(rows []InventoryRow, view ViewCategory) []InventoryRow {
+	switch {
+	case groupedView(view):
+		return sortRowsByGroup(rows)
+	case view == ViewDiscover:
+		// Discover's blocks are directories, not managers; see
+		// output/tui_discover.go for why it cannot group the way the rest do.
+		return sortRowsByDirectory(rows)
+	default:
+		return rows
 	}
 }
 
