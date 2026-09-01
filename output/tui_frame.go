@@ -241,7 +241,13 @@ func renderHeaderLine(width int, title, tagline, stats string, styles ThemeStyle
 // left-aligned label, and a count right-aligned to a shared column so the
 // numbers scan vertically. Padded to rowCount rows so it lines up with the
 // content pane.
-func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model.Tool, rowCount int, styles ThemeStyles) []string {
+//
+// focused is whether the keyboard is on the sidebar layer. The active tab keeps
+// its active styling either way -- it is still the open view -- but only a
+// focused sidebar draws the selection bar, so the bar always marks what the
+// movement keys are about to move. The column is reserved on every row
+// regardless, so gaining or losing focus never shifts the labels.
+func renderSidebarLines(tabs []string, active int, focused bool, toolsBySrc map[string][]model.Tool, rowCount int, styles ThemeStyles) []string {
 	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc, styles)
 	width := 3 + labelWidth + sidebarCountGap + countWidth
 
@@ -264,7 +270,7 @@ func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model
 		}
 
 		bar := " "
-		if i == active {
+		if i == active && focused {
 			bar = styles.SelectionBar.Render(styles.Glyph.Selection)
 		}
 
@@ -329,7 +335,7 @@ func (m tuiModel) renderFrame() string {
 
 	sidebar := m.styles.SidebarPane.Render(lipgloss.JoinVertical(
 		lipgloss.Left,
-		renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount, m.styles)...,
+		renderSidebarLines(m.tabs, m.activeTab, m.sidebarFocused(), m.toolsBySrc, rowCount, m.styles)...,
 	))
 	content := m.styles.ContentPane.Render(lipgloss.JoinVertical(
 		lipgloss.Left,

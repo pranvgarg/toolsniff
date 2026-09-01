@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/registry"
 )
@@ -658,12 +659,174 @@ func TestV2DigitKeysUnchanged(t *testing.T) {
 	}
 }
 
+// navShell is a two-row v3 shell with the focus layer set explicitly, so every
+// navigation test names the layer it is about rather than leaning on the
+// default. Two rows is the minimum that can tell "the cursor moved" from "the
+// cursor could not move".
+func navShell(t *testing.T, layer focusLayer) tuiModel {
+	t.Helper()
+	m := v3Shell(t, brewObservation("ripgrep"), brewObservation("fd"))
+	m.focus = layer
+	return m
+}
+
+func TestTabKeysMoveSidebarWhenSidebarFocused(t *testing.T) {
+	m := navShell(t, focusSidebar)
+	before := m.activeTab
+
+	updated, _ := m.Update(testKey("right"))
+	shell := updated.(tuiModel)
+	if shell.activeTab != before+1 {
+		t.Fatalf("→ left the sidebar on tab %d, want %d", shell.activeTab, before+1)
+	}
+	if want := reportViewForTab(uiModeV3, before+1); shell.report.state.View != want {
+		t.Errorf("→ opened %q, want %q", shell.report.state.View, want)
+	}
+	// Moving the selection is not entering it: the next arrow has to keep
+	// walking tabs, not rows.
+	if shell.focus != focusSidebar {
+		t.Errorf("→ moved focus off the sidebar")
+	}
+
+	updated, _ = shell.Update(testKey("left"))
+	if back := updated.(tuiModel); back.activeTab != before || back.focus != focusSidebar {
+		t.Errorf("← left tab %d focus %v, want tab %d on the sidebar", back.activeTab, back.focus, before)
+	}
+}
+
+func TestUpDownMovesSidebarWhenSidebarFocused(t *testing.T) {
+	m := navShell(t, focusSidebar)
+	before, cursor := m.activeTab, m.report.selected
+
+	updated, _ := m.Update(testKey("down"))
+	shell := updated.(tuiModel)
+	if shell.activeTab != before+1 {
+		t.Fatalf("↓ on the sidebar left tab %d, want %d", shell.activeTab, before+1)
+	}
+	// The row cursor is the pane's, and the pane does not have the keyboard, so
+	// ↓ must not walk it forward. It can still be pulled back by the tab it
+	// landed on holding fewer rows -- that is rebuildRows, not this key.
+	if shell.report.selected > cursor {
+		t.Errorf("↓ on the sidebar walked the row cursor forward to %d, want no further than %d",
+			shell.report.selected, cursor)
+	}
+	if shell.focus != focusSidebar {
+		t.Errorf("↓ moved focus off the sidebar")
+	}
+}
+
+func TestEnterOnSidebarOpensPane(t *testing.T) {
+	m := navShell(t, focusSidebar)
+
+	updated, _ := m.Update(testKey("enter"))
+	shell := updated.(tuiModel)
+	if shell.focus != focusPane {
+		t.Fatalf("enter on the sidebar left focus on the sidebar")
+	}
+	if want := reportViewForTab(uiModeV3, shell.activeTab); shell.report.state.View != want {
+		t.Errorf("enter opened %q, want the active tab's view %q", shell.report.state.View, want)
+	}
+	// One level per enter: the pane is open, but no row's detail is.
+	if shell.report.detail != nil {
+		t.Errorf("enter on the sidebar opened a row detail as well as the pane")
+	}
+
+	// And now enter means what it means in a pane.
+	updated, _ = shell.Update(testKey("enter"))
+	if shell = updated.(tuiModel); shell.report.detail == nil {
+		t.Errorf("enter in the pane did not open the selected row's detail")
+	}
+}
+
+func TestTabKeyTogglesFocus(t *testing.T) {
+	m := navShell(t, focusPane)
+
+	updated, _ := m.Update(testKey("tab"))
+	shell := updated.(tuiModel)
+	if shell.focus != focusSidebar {
+		t.Fatalf("tab from the pane did not focus the sidebar")
+	}
+	updated, _ = shell.Update(testKey("tab"))
+	if shell = updated.(tuiModel); shell.focus != focusPane {
+		t.Fatalf("tab from the sidebar did not focus the pane")
+	}
+}
+
+func TestEscFromPaneReturnsToSidebar(t *testing.T) {
+	m := navShell(t, focusPane)
+	view := m.report.state.View
+	if m.report.detail != nil || len(m.report.selectedSet) > 0 || m.report.drawer.Open {
+		t.Fatalf("fixture has something open for esc to close first")
+	}
+
+	updated, _ := m.Update(testKey("esc"))
+	shell := updated.(tuiModel)
+	if shell.focus != focusSidebar {
+		t.Fatalf("esc in an empty pane did not return focus to the sidebar")
+	}
+	// Walking out is all it did: the view is still open behind the sidebar.
+	if shell.report.state.View != view {
+		t.Errorf("esc moved off %q to %q", view, shell.report.state.View)
+	}
+}
+
+func TestEscFromSidebarNoOp(t *testing.T) {
+	m := navShell(t, focusSidebar)
+	view, tab := m.report.state.View, m.activeTab
+
+	updated, _ := m.Update(testKey("esc"))
+	shell := updated.(tuiModel)
+	if shell.focus != focusSidebar {
+		t.Fatalf("esc on the sidebar moved focus to %v", shell.focus)
+	}
+	if shell.report.state.View != view || shell.activeTab != tab {
+		t.Errorf("esc on the sidebar moved to %q (tab %d), want %q (tab %d)",
+			shell.report.state.View, shell.activeTab, view, tab)
+	}
+}
+
+func TestSidebarShowsFocusMarkerOnlyWhenFocused(t *testing.T) {
+	styles := overviewStyles()
+	tabs := reportTabsForMode(uiModeV2)
+	active := 1
+
+	focused := renderSidebarLines(tabs, active, true, nil, len(tabs), styles)
+	if !strings.Contains(focused[active], styles.Glyph.Selection) {
+		t.Errorf("focused sidebar's active tab lacks the selection glyph %q:\n%s",
+			styles.Glyph.Selection, focused[active])
+	}
+
+	// Unfocused, the active tab is still the open view -- it keeps its label and
+	// its count -- but the bar that says "the movement keys are here" is gone.
+	unfocused := renderSidebarLines(tabs, active, false, nil, len(tabs), styles)
+	if strings.Contains(unfocused[active], styles.Glyph.Selection) {
+		t.Errorf("unfocused sidebar still carries the selection glyph:\n%s", unfocused[active])
+	}
+	if lipgloss.Width(focused[active]) != lipgloss.Width(unfocused[active]) {
+		t.Errorf("focus changed the sidebar's width: %d focused, %d unfocused",
+			lipgloss.Width(focused[active]), lipgloss.Width(unfocused[active]))
+	}
+}
+
 func testKey(text string) tea.KeyPressMsg {
 	switch text {
 	case "enter":
 		return testKeyCode(tea.KeyEnter)
 	case "esc":
 		return testKeyCode(tea.KeyEscape)
+	// The named keys have no text of their own: a terminal reports them by code,
+	// which is what key.Matches sees, so spelling them as runes would produce a
+	// key nothing is bound to.
+	case "tab":
+		return testKeyCode(tea.KeyTab)
+	case "up":
+		return testKeyCode(tea.KeyUp)
+	case "down":
+		return testKeyCode(tea.KeyDown)
+	case "left":
+		return testKeyCode(tea.KeyLeft)
+	case "right":
+		return testKeyCode(tea.KeyRight)
 	}
 	return tea.KeyPressMsg(tea.Key{Text: text, Code: []rune(text)[0]})
 }

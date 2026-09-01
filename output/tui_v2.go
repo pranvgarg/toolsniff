@@ -37,6 +37,21 @@ type reportTUIModel struct {
 	uiMode      string
 }
 
+// focusLayer is which of the two navigation layers the keyboard is driving.
+// The model is a file manager's: the sidebar chooses *which pane* is open, the
+// pane chooses *which row* is selected, and the movement keys mean whichever of
+// those two the focus is on. Without it the tab strip and the row cursor both
+// answered to the same keys, and nothing walked back out to the sidebar.
+type focusLayer int
+
+const (
+	// focusSidebar is home: ←/→ and ↑/↓ walk the tab list, enter opens the tab.
+	focusSidebar focusLayer = iota
+	// focusPane is inside the open view: ↑/↓ walk the rows, enter opens the
+	// selected row's detail, esc returns to the sidebar.
+	focusPane
+)
+
 // NewObservationTUIModel creates an additive report-backed Bubble Tea model.
 func NewObservationTUIModel(report ObservationReport) tea.Model {
 	model := newObservationTUIModel(report, TUIOptions{})
@@ -224,15 +239,47 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncReportShell()
 				m.resizeContent()
 				return m, nil
+			case key.Matches(keyMsg, m.keys.Focus):
+				m.toggleFocus()
+				return m, nil
 			case key.Matches(keyMsg, m.keys.NextTab):
-				tabs := reportTabsForMode(m.report.uiMode)
-				index := (reportTabIndex(m.report.uiMode, m.report.state.View) + 1) % len(tabs)
-				m.openReportView(reportViewForTab(m.report.uiMode, index))
+				// ←/→ are the sidebar's own keys now. From inside a pane they do
+				// nothing: the way out is esc, and a stray arrow should not move
+				// the ground out from under the row the user is reading.
+				if m.focus == focusSidebar {
+					m.moveSidebar(1)
+				}
 				return m, nil
 			case key.Matches(keyMsg, m.keys.PrevTab):
-				tabs := reportTabsForMode(m.report.uiMode)
-				index := (reportTabIndex(m.report.uiMode, m.report.state.View) - 1 + len(tabs)) % len(tabs)
-				m.openReportView(reportViewForTab(m.report.uiMode, index))
+				if m.focus == focusSidebar {
+					m.moveSidebar(-1)
+				}
+				return m, nil
+			case m.focus == focusSidebar && key.Matches(keyMsg, m.keys.Down):
+				// ↑/↓ are contextual: on the sidebar they walk the tab list, in the
+				// pane they walk the rows (reportTUIModel.Update owns that half).
+				m.moveSidebar(1)
+				return m, nil
+			case m.focus == focusSidebar && key.Matches(keyMsg, m.keys.Up):
+				m.moveSidebar(-1)
+				return m, nil
+			case m.focus == focusSidebar && key.Matches(keyMsg, m.keys.Open):
+				// enter is "go one level in". From the sidebar that means the tab
+				// under the selection, which is already the open view -- so the only
+				// thing left to move is the focus.
+				m.openReportView(reportViewForTab(m.report.uiMode, m.activeTab))
+				m.focus = focusPane
+				return m, nil
+			case key.Matches(keyMsg, m.keys.Back):
+				// esc is "go one level out", and the report's own chain (detail →
+				// marks → drawer → filters) is the inner half of it. Only once that
+				// has nothing left to close does the focus itself walk out, back to
+				// the sidebar -- which is the way home this UI did not have.
+				if !m.report.dismissTopLayer() && m.focus == focusPane {
+					m.focus = focusSidebar
+				}
+				m.syncReportShell()
+				m.resizeContent()
 				return m, nil
 			case key.Matches(keyMsg, m.keys.JumpTab):
 				// One digit ladder for both modes: v2 answers 1-8, v3 answers 1-4
@@ -240,6 +287,9 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// is the active mode's tab count.
 				if index := int(keyName[0] - '1'); index >= 0 && index < len(reportTabsForMode(m.report.uiMode)) {
 					m.openReportView(reportViewForTab(m.report.uiMode, index))
+					// A digit names a destination, not a direction: it lands the user
+					// in the pane ready to move, exactly as enter from the sidebar does.
+					m.focus = focusPane
 				}
 				return m, nil
 			case key.Matches(keyMsg, m.keys.JumpManage):
@@ -248,6 +298,7 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// than picking an arbitrary near-miss the key stays inert there.
 				if m.report.uiMode == uiModeV3 {
 					m.openReportView(ViewManage)
+					m.focus = focusPane
 				}
 				return m, nil
 			case key.Matches(keyMsg, m.keys.UpdateCopy):
@@ -285,6 +336,34 @@ func (m *tuiModel) openReportView(view ViewCategory) {
 	m.report.drawer.State = m.report.state
 	m.report.rebuildRows()
 	m.syncReportShell()
+}
+
+// moveSidebar walks the sidebar's selection by delta tabs, wrapping, and opens
+// what it lands on. Moving the selection and opening the pane are one act here:
+// the pane is the sidebar's preview, so there is nothing to "confirm". What
+// enter adds is the focus move, which is why this does not touch m.focus.
+func (m *tuiModel) moveSidebar(delta int) {
+	tabs := reportTabsForMode(m.report.uiMode)
+	index := (reportTabIndex(m.report.uiMode, m.report.state.View) + delta + len(tabs)) % len(tabs)
+	m.openReportView(reportViewForTab(m.report.uiMode, index))
+}
+
+// toggleFocus flips which layer the keyboard drives. It is the keyboard's
+// equivalent of clicking on the sidebar versus clicking on a row.
+func (m *tuiModel) toggleFocus() {
+	if m.focus == focusSidebar {
+		m.focus = focusPane
+		return
+	}
+	m.focus = focusSidebar
+}
+
+// sidebarFocused reports whether the keyboard is driving the sidebar, and is
+// what the sidebar renders its focus marker from. The legacy per-source TUI has
+// no second layer to move into -- ←/→ is the whole of its navigation -- so its
+// sidebar always reads as focused rather than as permanently handed off.
+func (m tuiModel) sidebarFocused() bool {
+	return m.report == nil || m.focus == focusSidebar
 }
 
 // setReportStatus is the single way the action keys speak: the report owns the
@@ -545,6 +624,37 @@ func (m *reportTUIModel) toggleMarkAll() {
 	}
 }
 
+// dismissTopLayer closes the topmost thing esc can close and says whether it
+// closed anything. Marks are cleared ahead of the filter but behind the detail
+// pane: esc has always meant "leave what is open" first, and a drawer the user
+// is reading is more in the way than a set they cannot see from inside it.
+//
+// The report answers "was there anything to leave" so the shell can decide what
+// esc means when there wasn't -- there is one chain, not one here and a copy of
+// its condition in updateReport.
+//
+// The view chip is excluded from the filter test for the same reason
+// reportContentLines excludes it: a view is always open, so counting it would
+// make "there is a filter to clear" permanently true and leave esc with nothing
+// left to hand back.
+func (m *reportTUIModel) dismissTopLayer() bool {
+	switch {
+	case m.detail != nil:
+		m.detail = nil
+	case len(m.selectedSet) > 0:
+		m.clearMarks()
+	case m.drawer.Open:
+		m.drawer.CloseDrawer()
+	case m.state.Text != "" || len(FilterChips(reportFilterChipState(m.state))) > 0:
+		m.state = ClearFilters(m.state)
+		m.drawer.State = m.state
+		m.rebuildRows()
+	default:
+		return false
+	}
+	return true
+}
+
 func (m *reportTUIModel) clearMarks() {
 	m.selectedSet = map[int]bool{}
 }
@@ -682,20 +792,7 @@ func (m *reportTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.drawer.State = m.state
 		m.drawer.OpenDrawer()
 	case "esc":
-		// Marks are cleared ahead of the filter but behind the detail pane: esc
-		// has always meant "leave what is open" first, and a drawer the user is
-		// reading is more in the way than a set they cannot see from inside it.
-		if m.detail != nil {
-			m.detail = nil
-		} else if len(m.selectedSet) > 0 {
-			m.clearMarks()
-		} else if m.drawer.Open {
-			m.drawer.CloseDrawer()
-		} else if m.state.Text != "" || len(FilterChips(m.state)) > 0 {
-			m.state = ClearFilters(m.state)
-			m.drawer.State = m.state
-			m.rebuildRows()
-		}
+		m.dismissTopLayer()
 	case "enter":
 		if observation, ok := m.selectedObservation(); ok {
 			detail := BuildDetailViewModel(observation)

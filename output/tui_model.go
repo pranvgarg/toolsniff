@@ -61,6 +61,11 @@ type tuiModel struct {
 	themePicker bool
 	themeIndex  int
 
+	// focus is which of the two navigation layers the keyboard drives: the
+	// sidebar (which pane is open) or the pane (which row is selected). See
+	// focusLayer in tui_v2.go for what each key means on each side.
+	focus focusLayer
+
 	keys keyMap
 	help help.Model
 
@@ -94,9 +99,10 @@ type TUIOptions struct {
 }
 
 // keyMap defines every key binding the TUI recognizes, satisfying
-// help.KeyMap so it can be rendered directly via help.Model.View. Up/Down
-// are included for display purposes only: table.Model handles ↑/↓/j/k
-// movement internally and these bindings are never dispatched against.
+// help.KeyMap so it can be rendered directly via help.Model.View. Up/Down are
+// dispatched against only while the sidebar holds focus; inside a pane the row
+// cursor is moved by table.Model (legacy) or reportTUIModel.Update (v2/v3),
+// both of which read ↑/↓/j/k themselves.
 type keyMap struct {
 	Up      key.Binding
 	Down    key.Binding
@@ -109,6 +115,13 @@ type keyMap struct {
 	Help    key.Binding
 	Theme   key.Binding
 	Quit    key.Binding
+
+	// The two-layer navigation keys. Focus swaps which layer the movement keys
+	// drive; Open goes one level in (sidebar → pane, row → detail) and Back one
+	// level out (detail → pane → sidebar), so every way in has a way out.
+	Focus key.Binding
+	Open  key.Binding
+	Back  key.Binding
 
 	// The action keys yank a command for the selected row onto the clipboard.
 	// What each one resolves to is decided entirely by KindActions in
@@ -134,19 +147,34 @@ type keyMap struct {
 var defaultKeyMap = keyMap{
 	Up: key.NewBinding(
 		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "move up"),
+		key.WithHelp("↑/k", "up (tab or row)"),
 	),
 	Down: key.NewBinding(
 		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "move down"),
+		key.WithHelp("↓/j", "down (tab or row)"),
 	),
 	PrevTab: key.NewBinding(
 		key.WithKeys("left", "h"),
 		key.WithHelp("←/h", "prev tab"),
 	),
+	// "tab" moved off this binding and onto Focus: the tab strip and ←/→ were
+	// two affordances for one action, and the key named after the tab strip is
+	// worth more as the one that says which layer you are in.
 	NextTab: key.NewBinding(
-		key.WithKeys("right", "l", "tab"),
-		key.WithHelp("→/l/tab", "next tab"),
+		key.WithKeys("right", "l"),
+		key.WithHelp("→/l", "next tab"),
+	),
+	Focus: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "focus sidebar/pane"),
+	),
+	Open: key.NewBinding(
+		key.WithKeys("enter"),
+		key.WithHelp("enter", "open (tab → pane · row → detail)"),
+	),
+	Back: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "back (detail → pane → sidebar)"),
 	),
 	JumpTab: key.NewBinding(
 		key.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"),
@@ -210,9 +238,13 @@ var defaultKeyMap = keyMap{
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "move")),
-		key.NewBinding(key.WithKeys("left", "right", "tab"), key.WithHelp("←/→/tab", "switch tab")),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "switch tab")),
+		// Short forms of Focus and Back: the collapsed strip has room for the key
+		// and what it does, not for the whole ladder each one walks. "?" spells
+		// them out in full.
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "focus")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 		k.Filter,
-		k.Theme,
 		k.Help,
 		k.Quit,
 	}
@@ -228,8 +260,10 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	digits := viewHelpBindings(k.reportTabs)
 	split := (len(digits) + 1) / 2
 	return [][]key.Binding{
-		{k.Up, k.Down, k.PrevTab, k.NextTab, k.JumpTab},
-		{k.Filter, k.Diff, k.Save, k.Help, k.Theme, k.Quit},
+		// The navigation column is the two-layer model read top to bottom: move
+		// within a layer, move between layers, then in and out of one.
+		{k.Up, k.Down, k.PrevTab, k.NextTab, k.Focus, k.Open, k.Back},
+		{k.JumpTab, k.Filter, k.Diff, k.Save, k.Help, k.Theme, k.Quit},
 		{k.UpdateCopy, k.UpdateCopyAll, k.RemoveCopy, k.JumpManage, k.Mark, k.MarkAll},
 		digits[:split],
 		digits[split:],
@@ -307,20 +341,25 @@ func newTUIModel(realTools, available, npxHistory []model.Tool, diff registry.Di
 	helpModel.Styles = helpStyles(styles)
 
 	return tuiModel{
-		tabs:        tabs,
-		toolsBySrc:  toolsBySrc,
-		sources:     sources,
-		content:     t,
-		baseRows:    baseRows,
-		styles:      styles,
-		realTools:   realTools,
-		available:   available,
-		regPath:     options.RegistryPath,
-		warnings:    warnings,
-		version:     options.Version,
-		theme:       options.Theme,
-		themeNames:  config.ThemePresets(),
-		configPath:  options.ConfigPath,
+		tabs:       tabs,
+		toolsBySrc: toolsBySrc,
+		sources:    sources,
+		content:    t,
+		baseRows:   baseRows,
+		styles:     styles,
+		realTools:  realTools,
+		available:  available,
+		regPath:    options.RegistryPath,
+		warnings:   warnings,
+		version:    options.Version,
+		theme:      options.Theme,
+		themeNames: config.ThemePresets(),
+		configPath: options.ConfigPath,
+		// A tab is already open on the first frame, so starting in the pane makes
+		// the landing view immediately interactive: ↑/↓ move rows and enter opens
+		// a detail without a preliminary "go in" keystroke. esc is the way back
+		// out to the sidebar, and ←/→ still switch tabs from there.
+		focus:       focusPane,
 		keys:        defaultKeyMap,
 		help:        helpModel,
 		splashTimer: newSplashTimer(),
