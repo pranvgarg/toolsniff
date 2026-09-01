@@ -118,6 +118,12 @@ type keyMap struct {
 	RemoveCopy    key.Binding
 	JumpManage    key.Binding
 
+	// Multi-select. Marking rows changes nothing about what a row is; it only
+	// widens what the bulk key above acts on, from "everything in this view" to
+	// "the ones you picked".
+	Mark    key.Binding
+	MarkAll key.Binding
+
 	// reportTabs is the tab set the "?" digit list describes. FullHelp is a
 	// method on keyMap with no model to ask, so newObservationTUIModel hands
 	// the mode's resolved tabs here; nil (the legacy RunTUI path) means v2.
@@ -188,6 +194,16 @@ var defaultKeyMap = keyMap{
 		key.WithKeys("m"),
 		key.WithHelp("m", "manage"),
 	),
+	// Space is the mark key every list UI uses; "v" is the vi-flavoured alias for
+	// the same thing. Bubble Tea v2 stringifies the space bar as "space".
+	Mark: key.NewBinding(
+		key.WithKeys("space", "v"),
+		key.WithHelp("space/v", "mark this row"),
+	),
+	MarkAll: key.NewBinding(
+		key.WithKeys("ctrl+a"),
+		key.WithHelp("ctrl+a", "mark every row here"),
+	),
 }
 
 // ShortHelp returns the handful of bindings shown in the collapsed footer.
@@ -214,7 +230,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PrevTab, k.NextTab, k.JumpTab},
 		{k.Filter, k.Diff, k.Save, k.Help, k.Theme, k.Quit},
-		{k.UpdateCopy, k.UpdateCopyAll, k.RemoveCopy, k.JumpManage},
+		{k.UpdateCopy, k.UpdateCopyAll, k.RemoveCopy, k.JumpManage, k.Mark, k.MarkAll},
 		digits[:split],
 		digits[split:],
 	}
@@ -497,31 +513,33 @@ func (m tuiModel) contentLines(width, height int) []string {
 	if m.report != nil {
 		return m.reportContentLines(width, height)
 	}
-	return padPane(m.inventoryPane(m.baseRows, m.content.Cursor(), width, height), width, height)
+	// The legacy per-source TUI has no report and so no marks: multi-select is a
+	// v2/v3 report-pane capability, and nil is the empty set.
+	return padPane(m.inventoryPane(m.baseRows, m.content.Cursor(), nil, width, height), width, height)
 }
 
 // inventoryPane renders a flat list plus its under-full row-count badge.
-func (m tuiModel) inventoryPane(rows []InventoryRow, selected, width, height int) []string {
-	return m.paneForRows(rows, selected, width, height, false)
+func (m tuiModel) inventoryPane(rows []InventoryRow, selected int, marks rowMarks, width, height int) []string {
+	return m.paneForRows(rows, selected, marks, width, height, false)
 }
 
 // groupedInventoryPane renders a list broken into counted manager sub-groups,
 // used by the kind-first views where a flat count ("79 packages") is not a fact
 // anyone can act on.
-func (m tuiModel) groupedInventoryPane(rows []InventoryRow, selected, width, height int) []string {
-	return m.paneForRows(rows, selected, width, height, true)
+func (m tuiModel) groupedInventoryPane(rows []InventoryRow, selected int, marks rowMarks, width, height int) []string {
+	return m.paneForRows(rows, selected, marks, width, height, true)
 }
 
-func (m tuiModel) paneForRows(rows []InventoryRow, selected, width, height int, grouped bool) []string {
+func (m tuiModel) paneForRows(rows []InventoryRow, selected int, marks rowMarks, width, height int, grouped bool) []string {
 	if len(rows) == 0 {
 		return []string{fitWidth(m.styles.EmptyState.Render("nothing to show here"), width)}
 	}
 	var lines []string
 	var used int
 	if grouped {
-		lines, used = renderGroupedInventoryTable(rows, selected, width, height, m.styles), groupedInventoryLineCount(rows)
+		lines, used = renderGroupedInventoryTable(rows, selected, marks, width, height, m.styles), groupedInventoryLineCount(rows)
 	} else {
-		lines, used = renderInventoryTable(rows, selected, width, height, m.styles), len(rows)+1
+		lines, used = renderInventoryTable(rows, selected, marks, width, height, m.styles), len(rows)+1
 	}
 	// A view that doesn't fill the pane gets an explicit count on its last
 	// line, so blank space below a short list reads as "that's all of them"

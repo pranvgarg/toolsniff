@@ -441,6 +441,188 @@ func TestUpdateCopyAllYanksEveryUpdatableRow(t *testing.T) {
 	}
 }
 
+// --- multi-select ------------------------------------------------------------
+
+// markedShell is three managed rows on the Manage tab: one npm package, one
+// Homebrew formula, and one pipx application. Every one of them has a runnable
+// primary action, but only the first two can be upgraded in place -- which is
+// what tells the two bulk paths apart.
+func markedShell(t *testing.T) tuiModel {
+	t.Helper()
+	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	pipx := observation("black", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "24.1.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	pipx.Origin = model.Origin{Provider: "pipx", Package: "black"}
+	pipx.ID = model.ObservationIdentity(pipx)
+	return v3Shell(t, npm, brewObservation("wget"), pipx)
+}
+
+func TestMultiSelectToggle(t *testing.T) {
+	m := markedShell(t)
+	if len(m.report.rows) < 3 {
+		t.Fatalf("setup: Manage lists %d rows, want at least 3", len(m.report.rows))
+	}
+
+	// The cursor is its own state: marking row 2 must not move it, and the mark
+	// key must not disturb what the single-select keys act on.
+	cursor := m.report.selected
+	m.report.toggleMark(2)
+	if !m.report.selectedSet[2] || len(m.report.selectedSet) != 1 {
+		t.Fatalf("after one toggle selectedSet = %v, want exactly {2}", m.report.selectedSet)
+	}
+	if m.report.selected != cursor {
+		t.Fatalf("marking moved the cursor to %d, want %d", m.report.selected, cursor)
+	}
+
+	m.report.toggleMark(2)
+	if len(m.report.selectedSet) != 0 {
+		t.Fatalf("after two toggles selectedSet = %v, want empty", m.report.selectedSet)
+	}
+
+	// The space key is the same operation, and the set is a set: pressing it
+	// twice on the same row leaves nothing behind.
+	m.Update(testKey(" "))
+	if !m.report.selectedSet[m.report.selected] {
+		t.Fatalf("space did not mark the cursor row; selectedSet = %v", m.report.selectedSet)
+	}
+	m.Update(testKey(" "))
+	if len(m.report.selectedSet) != 0 {
+		t.Fatalf("space twice left selectedSet = %v, want empty", m.report.selectedSet)
+	}
+
+	// ctrl+a is all-or-nothing over the open view.
+	m.Update(testCtrlKey('a'))
+	if len(m.report.selectedSet) != len(m.report.rows) {
+		t.Fatalf("ctrl+a marked %d of %d rows", len(m.report.selectedSet), len(m.report.rows))
+	}
+	m.Update(testCtrlKey('a'))
+	if len(m.report.selectedSet) != 0 {
+		t.Fatalf("ctrl+a again left %d rows marked, want 0", len(m.report.selectedSet))
+	}
+}
+
+func TestMultiSelectMarksRender(t *testing.T) {
+	styles := overviewStyles()
+	rows := sortRowsByGroup(InventoryRows(observationsForView(manageReport(), ViewManage)))
+	if len(rows) < 3 {
+		t.Fatalf("fixture has %d managed rows, want at least 3", len(rows))
+	}
+
+	// Cursor on row 0, mark on row 1: the marked row must carry the selection
+	// glyph the cursor row carries, and row 2 -- neither -- must not.
+	rendered := renderManageRows(rows, 0, map[int]bool{1: true}, 100, 20, styles)
+	marked := lineContaining(t, rendered, rows[1].Name)
+	if !strings.Contains(marked, styles.Glyph.Selection) {
+		t.Errorf("marked row %q lacks the selection glyph %q:\n%s",
+			rows[1].Name, styles.Glyph.Selection, marked)
+	}
+	if plain := lineContaining(t, rendered, rows[2].Name); strings.Contains(plain, styles.Glyph.Selection) {
+		t.Errorf("unmarked row %q carries the selection glyph %q:\n%s",
+			rows[2].Name, styles.Glyph.Selection, plain)
+	}
+
+	// Single-select is unchanged: with no marks the cursor row, and only it,
+	// carries the glyph.
+	bare := renderManageRows(rows, 0, nil, 100, 20, styles)
+	if cursor := lineContaining(t, bare, rows[0].Name); !strings.Contains(cursor, styles.Glyph.Selection) {
+		t.Errorf("cursor row lost its selection glyph without marks:\n%s", cursor)
+	}
+	if plain := lineContaining(t, bare, rows[1].Name); strings.Contains(plain, styles.Glyph.Selection) {
+		t.Errorf("row 1 is marked with an empty set:\n%s", plain)
+	}
+}
+
+func TestBulkCopyUsesMarkedRowsWhenSet(t *testing.T) {
+	clipboard := captureClipboard(t)
+	m := markedShell(t)
+
+	m.Update(testCtrlKey('a'))
+	if len(m.report.selectedSet) != 3 {
+		t.Fatalf("ctrl+a marked %d rows, want 3", len(m.report.selectedSet))
+	}
+	m.Update(testKey("U"))
+
+	lines := strings.Split(clipboard(), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("U copied %d lines for 3 marked rows: %q", len(lines), clipboard())
+	}
+	// Every line is the row's own primary action, not a re-derived update: pipx
+	// has no upgrade at all, so its uninstall is what proves the marked path
+	// reads PrimaryActionCommand.
+	for _, observation := range m.report.markedObservations() {
+		argv, ok := PrimaryActionCommand(observation)
+		if !ok {
+			t.Fatalf("%s has no runnable action; the fixture is wrong", observation.DisplayName)
+		}
+		if !strings.Contains(clipboard(), strings.Join(argv, " ")) {
+			t.Errorf("U omitted %q", strings.Join(argv, " "))
+		}
+	}
+	if !strings.Contains(m.report.status, "marked") {
+		t.Errorf("U status = %q, want it to name the marked rows", m.report.status)
+	}
+
+	// With nothing marked the key keeps its Task 10 meaning: every in-place
+	// update in the open view, which excludes the pipx row.
+	m.Update(testKey("esc"))
+	if len(m.report.selectedSet) != 0 {
+		t.Fatalf("esc left %d rows marked", len(m.report.selectedSet))
+	}
+	m.Update(testKey("U"))
+	if got := len(strings.Split(clipboard(), "\n")); got != 2 {
+		t.Fatalf("unmarked U copied %d lines, want the 2 updatable rows: %q", got, clipboard())
+	}
+	if want := "copied 2 update commands"; m.report.status != want {
+		t.Fatalf("unmarked U status = %q, want %q", m.report.status, want)
+	}
+}
+
+func TestEscClearsMarksOnlyWhenPresent(t *testing.T) {
+	m := markedShell(t)
+	view := m.report.state.View
+
+	m.Update(testKey(" "))
+	if len(m.report.selectedSet) != 1 {
+		t.Fatalf("space marked %d rows, want 1", len(m.report.selectedSet))
+	}
+	cursor := m.report.selected
+
+	updated, _ := m.Update(testKey("esc"))
+	shell := updated.(tuiModel)
+	if len(shell.report.selectedSet) != 0 {
+		t.Fatalf("esc left %d rows marked", len(shell.report.selectedSet))
+	}
+	// Clearing marks is all esc did: the view, the cursor, and the rows are
+	// where they were.
+	if shell.report.state.View != view || shell.report.selected != cursor {
+		t.Fatalf("esc moved to view %q row %d, want %q row %d",
+			shell.report.state.View, shell.report.selected, view, cursor)
+	}
+
+	// A second esc has no marks to clear and no filter to drop, so it changes
+	// nothing -- the ordinary behaviour it had before multi-select existed.
+	updated, _ = shell.Update(testKey("esc"))
+	shell = updated.(tuiModel)
+	if shell.report.state.View != view || shell.report.selected != cursor || len(shell.report.rows) != 3 {
+		t.Fatalf("esc on an empty set changed the view: %q row %d, %d rows",
+			shell.report.state.View, shell.report.selected, len(shell.report.rows))
+	}
+}
+
+// lineContaining is the one rendered line holding needle, so a row assertion
+// reads the row it names rather than the whole pane.
+func lineContaining(t *testing.T, lines []string, needle string) string {
+	t.Helper()
+	for _, line := range lines {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	t.Fatalf("no rendered line contains %q:\n%s", needle, strings.Join(lines, "\n"))
+	return ""
+}
+
 func TestV2DigitKeysUnchanged(t *testing.T) {
 	clipboard := captureClipboard(t)
 	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
@@ -488,6 +670,12 @@ func testKey(text string) tea.KeyPressMsg {
 
 func testKeyCode(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
+}
+
+// testCtrlKey is a chord: Bubble Tea stringifies it as "ctrl+<code>", which is
+// what the binding matches on.
+func testCtrlKey(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: code, Mod: tea.ModCtrl})
 }
 
 func emptyObservationDiff() (diff registry.ObservationDiff) {

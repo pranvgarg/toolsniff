@@ -25,6 +25,12 @@ type reportTUIModel struct {
 	detail      *DetailViewModel
 	status      string
 	selected    int
+	// selectedSet is multi-select: the rows the user has marked for a bulk
+	// action, keyed by their flat index in rows -- the same index selected uses.
+	// It lives beside the cursor rather than replacing it, so every single-select
+	// key keeps working unchanged and marking is purely additional. Positional
+	// keys only stay meaningful while rows does, so rebuildRows drops them.
+	selectedSet map[int]bool
 	rows        []InventoryRow
 	width       int
 	height      int
@@ -48,7 +54,13 @@ func newReportTUIModel(report ObservationReport, mode string) reportTUIModel {
 	// dashboard rather than a flat list: the first question is "what's on this
 	// machine", not "here are 200 rows".
 	state.View = ViewCategory(reportTabsForMode(mode)[0])
-	model := reportTUIModel{report: report, state: state, drawer: NewFilterDrawer(state), uiMode: mode}
+	model := reportTUIModel{
+		report:      report,
+		state:       state,
+		drawer:      NewFilterDrawer(state),
+		selectedSet: map[int]bool{},
+		uiMode:      mode,
+	}
 	model.rebuildRows()
 	return model
 }
@@ -237,7 +249,15 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(keyMsg, m.keys.RemoveCopy):
 				return m, m.yankSelected(PrimaryRemoveCommand, "nothing here knows how to uninstall this entry")
 			case key.Matches(keyMsg, m.keys.UpdateCopyAll):
-				return m, m.yankEveryUpdate()
+				return m, m.yankBulk()
+			case key.Matches(keyMsg, m.keys.Mark):
+				m.report.toggleMark(m.report.selected)
+				m.setReportStatus(markStatus(len(m.report.selectedSet)))
+				return m, nil
+			case key.Matches(keyMsg, m.keys.MarkAll):
+				m.report.toggleMarkAll()
+				m.setReportStatus(markStatus(len(m.report.selectedSet)))
+				return m, nil
 			}
 		}
 	}
@@ -289,6 +309,53 @@ func (m *tuiModel) yankSelected(command func(model.Observation) ([]string, bool)
 	line := strings.Join(argv, " ")
 	m.setReportStatus("copied: " + line)
 	return copyToClipboard(line)
+}
+
+// markStatus says how many rows are marked, so the mark key is never silent.
+// Zero marks is a state worth naming too: it is what the user just went back to.
+func markStatus(count int) string {
+	if count == 0 {
+		return "no rows marked"
+	}
+	noun := "rows"
+	if count == 1 {
+		noun = "row"
+	}
+	return fmt.Sprintf("%d %s marked", count, noun)
+}
+
+// yankBulk is what the bulk key does. Marked rows are an explicit answer to
+// "which ones", so they win over the view's own contents; with nothing marked
+// the key keeps its original meaning and yanks every update in the open view.
+func (m *tuiModel) yankBulk() tea.Cmd {
+	if len(m.report.selectedSet) > 0 {
+		return m.yankMarkedActions()
+	}
+	return m.yankEveryUpdate()
+}
+
+// yankMarkedActions copies the primary action of every marked row, one per line
+// and in row order. It yanks the primary action rather than the update because
+// marking is a deliberate per-row choice: the user picked a cask, an npm package
+// and a .app, and what each one is *for* differs -- KindActions decides that,
+// exactly as the single-row copy key does.
+func (m *tuiModel) yankMarkedActions() tea.Cmd {
+	var lines []string
+	for _, observation := range m.report.markedObservations() {
+		if argv, ok := PrimaryActionCommand(observation); ok {
+			lines = append(lines, strings.Join(argv, " "))
+		}
+	}
+	if len(lines) == 0 {
+		m.setReportStatus("none of the marked rows has a runnable action")
+		return nil
+	}
+	noun := "commands"
+	if len(lines) == 1 {
+		noun = "command"
+	}
+	m.setReportStatus(fmt.Sprintf("copied %d %s from marked rows", len(lines), noun))
+	return copyToClipboard(strings.Join(lines, "\n"))
 }
 
 // yankEveryUpdate copies one upgrade command per line for every row in the open
@@ -391,25 +458,25 @@ func (m tuiModel) reportContentLines(width, height int) []string {
 		// Issues, but it renders those events as grouped inventory rows rather
 		// than as the v2 category list, so the intent views can diverge from the
 		// v2 panes without disturbing them.
-		lines = append(lines, renderReviewRows(m.report.rows, m.report.selected, width, body, m.styles)...)
+		lines = append(lines, renderReviewRows(m.report.rows, m.report.selected, m.report.selectedSet, width, body, m.styles)...)
 	case m.report.state.View == ViewChanges || m.report.state.View == ViewIssues:
 		lines = append(lines, renderChangeLines(m.report.report.Changes, m.styles)...)
 	case m.report.state.View == ViewManage:
 		// Ahead of the general grouped case: Manage is a grouped view, but it
 		// owns its own renderer so the intent views can diverge from the
 		// kind-first panes without disturbing them.
-		lines = append(lines, renderManageRows(m.report.rows, m.report.selected, width, body, m.styles)...)
+		lines = append(lines, renderManageRows(m.report.rows, m.report.selected, m.report.selectedSet, width, body, m.styles)...)
 	case m.report.state.View == ViewDiscover:
 		// Manage's complement, and grouped by directory rather than by manager,
 		// so it owns its renderer for the same reason Manage does. The tip is
 		// derived from the whole report -- which manager owns the most of this
 		// machine is not a fact the filtered rows can answer.
 		lines = append(lines, renderDiscoverRows(m.report.rows,
-			discoverSuggestion(m.report.report, m.report.rows), m.report.selected, width, body, m.styles)...)
+			discoverSuggestion(m.report.report, m.report.rows), m.report.selected, m.report.selectedSet, width, body, m.styles)...)
 	case groupedView(m.report.state.View):
-		lines = append(lines, m.groupedInventoryPane(m.report.rows, m.report.selected, width, body)...)
+		lines = append(lines, m.groupedInventoryPane(m.report.rows, m.report.selected, m.report.selectedSet, width, body)...)
 	default:
-		lines = append(lines, m.inventoryPane(m.report.rows, m.report.selected, width, body)...)
+		lines = append(lines, m.inventoryPane(m.report.rows, m.report.selected, m.report.selectedSet, width, body)...)
 	}
 	return padPane(lines, width, height)
 }
@@ -426,12 +493,81 @@ func (m *reportTUIModel) Init() tea.Cmd { return nil }
 
 func (m *reportTUIModel) rebuildRows() {
 	m.rows = FilterReport(m.report, m.state)
+	// A mark names a position in the row list, so a new row list makes every
+	// existing mark a claim about rows that are no longer there. Dropping them is
+	// the only answer that cannot silently act on something the user never
+	// picked: after a filter or a tab change, index 4 is a different entry.
+	m.clearMarks()
 	if m.selected >= len(m.rows) {
 		m.selected = len(m.rows) - 1
 	}
 	if m.selected < 0 && len(m.rows) > 0 {
 		m.selected = 0
 	}
+}
+
+// toggleMark adds or removes one row's mark. An index outside the current rows
+// is ignored rather than stored, so the set can never name a row the pane does
+// not list.
+func (m *reportTUIModel) toggleMark(index int) {
+	if index < 0 || index >= len(m.rows) {
+		return
+	}
+	if m.selectedSet == nil {
+		m.selectedSet = map[int]bool{}
+	}
+	if m.selectedSet[index] {
+		delete(m.selectedSet, index)
+		return
+	}
+	m.selectedSet[index] = true
+}
+
+// toggleMarkAll marks every row in the open view, or clears the set when they
+// are already all marked -- one key for "all of these" and for taking it back.
+func (m *reportTUIModel) toggleMarkAll() {
+	if len(m.rows) == 0 {
+		return
+	}
+	if len(m.selectedSet) == len(m.rows) {
+		m.clearMarks()
+		return
+	}
+	m.selectedSet = make(map[int]bool, len(m.rows))
+	for index := range m.rows {
+		m.selectedSet[index] = true
+	}
+}
+
+func (m *reportTUIModel) clearMarks() {
+	m.selectedSet = map[int]bool{}
+}
+
+// markedObservations resolves the marked rows to their observations in row
+// order, which is the order the pane lists them and therefore the order a copied
+// block of commands reads in.
+func (m *reportTUIModel) markedObservations() []model.Observation {
+	if len(m.selectedSet) == 0 {
+		return nil
+	}
+	// Indexed by row rather than by rowObservations' output: a row whose
+	// observation cannot be resolved is dropped from that slice, which would
+	// shift every later row out from under its mark.
+	all := m.report.AllObservations()
+	byID := make(map[string]model.Observation, len(all))
+	for _, observation := range all {
+		byID[observation.ID] = observation
+	}
+	marked := make([]model.Observation, 0, len(m.selectedSet))
+	for index, row := range m.rows {
+		if !m.selectedSet[index] {
+			continue
+		}
+		if observation, ok := byID[row.ObservationID]; ok {
+			marked = append(marked, observation)
+		}
+	}
+	return marked
 }
 
 func (m *reportTUIModel) selectedObservation() (model.Observation, bool) {
@@ -540,8 +676,13 @@ func (m *reportTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.drawer.State = m.state
 		m.drawer.OpenDrawer()
 	case "esc":
+		// Marks are cleared ahead of the filter but behind the detail pane: esc
+		// has always meant "leave what is open" first, and a drawer the user is
+		// reading is more in the way than a set they cannot see from inside it.
 		if m.detail != nil {
 			m.detail = nil
+		} else if len(m.selectedSet) > 0 {
+			m.clearMarks()
 		} else if m.drawer.Open {
 			m.drawer.CloseDrawer()
 		} else if m.state.Text != "" || len(FilterChips(m.state)) > 0 {

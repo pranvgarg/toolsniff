@@ -21,6 +21,17 @@ const (
 	firstDataColumn
 )
 
+// rowMarks is the set of rows a user has marked for a bulk action, keyed by the
+// flat index the pane assigns each row -- the same index the cursor uses, so a
+// mark and the cursor address rows identically. A nil set marks nothing, which
+// is what every caller that has no multi-select state hands in.
+type rowMarks map[int]bool
+
+// marked reports whether a flat row index carries a mark. It is a method rather
+// than a bare lookup so the nil case is answered in one place and a renderer
+// never has to check the map before reading it.
+func (m rowMarks) marked(index int) bool { return m[index] }
+
 // inventoryColumn is one rendered column. Widths are display cells and exclude
 // the one cell of padding applied to each side by the cell style.
 type inventoryColumn struct {
@@ -168,7 +179,12 @@ func fitCell(value string, column inventoryColumn) string {
 // width cells wide: one header line plus a scrolled window of data rows. The
 // window is computed here rather than delegated to a viewport so the selected
 // row's index stays meaningful to the style function.
-func renderInventoryTable(rows []InventoryRow, selected, width, height int, styles ThemeStyles) []string {
+//
+// marks are the rows the user has picked out for a bulk action; they light the
+// same bar the cursor uses, because a marked row and the cursor row are the same
+// claim -- "this one" -- and the cursor is still told apart by its raised
+// background. A nil set is the single-select case.
+func renderInventoryTable(rows []InventoryRow, selected int, marks rowMarks, width, height int, styles ThemeStyles) []string {
 	if height < 1 {
 		height = 1
 	}
@@ -193,11 +209,12 @@ func renderInventoryTable(rows []InventoryRow, selected, width, height int, styl
 	}
 
 	matrix := make([][]string, 0, len(window))
+	bars := make(map[int]bool, len(window))
 	for index, row := range window {
 		cells := make([]string, 0, len(columns)+firstDataColumn)
 		bar := " "
-		if index == cursor {
-			bar = styles.Glyph.Selection
+		if index == cursor || marks.marked(start+index) {
+			bar, bars[index] = styles.Glyph.Selection, true
 		}
 		cells = append(cells, bar, styles.rowGlyph(row.Status))
 		matrix = append(matrix, append(cells, inventoryCells(row, columns, styles)...))
@@ -209,7 +226,7 @@ func renderInventoryTable(rows []InventoryRow, selected, width, height int, styl
 		BorderRight(false).BorderRow(false).BorderColumn(false).BorderHeader(false).
 		Headers(headers...).
 		Rows(matrix...).
-		StyleFunc(inventoryStyleFunc(window, cursor, actionCellColumn(columns), styles)).
+		StyleFunc(inventoryStyleFunc(window, cursor, bars, actionCellColumn(columns), styles)).
 		Render()
 
 	// A table with no data rows still emits a trailing blank line; fitLines
@@ -294,12 +311,21 @@ func groupedInventoryLineCount(rows []InventoryRow) int {
 // label and whose VERSION cell carries the count -- so every column stays
 // aligned across blocks without a colspan primitive lipgloss does not have.
 // See DESIGN.md > Components > "Kind sub-group header".
-func renderGroupedInventoryTable(rows []InventoryRow, selected, width, height int, styles ThemeStyles) []string {
+func renderGroupedInventoryTable(rows []InventoryRow, selected int, marks rowMarks, width, height int, styles ThemeStyles) []string {
+	return renderInventoryGroups(inventoryGroups(rows), selected, marks, width, height, styles)
+}
+
+// renderInventoryGroups is that same render for a caller that has already
+// decided what the blocks are. Discover groups by the directory a binary sits
+// in, which inventoryGroups -- keyed on the manager -- cannot express; the rows
+// inside a block must still be drawn by the one row renderer the rest of the
+// TUI uses, so it takes groups rather than growing a second table.
+func renderInventoryGroups(groups []inventoryGroup, selected int, marks rowMarks, width, height int, styles ThemeStyles) []string {
 	if height < 1 {
 		height = 1
 	}
 	columns := inventoryColumnsFor(width)
-	entries := groupedEntries(inventoryGroups(rows))
+	entries := groupedEntries(groups)
 
 	bodyHeight := height - 1 // the column header line
 	if bodyHeight < 0 {
@@ -327,14 +353,17 @@ func renderGroupedInventoryTable(rows []InventoryRow, selected, width, height in
 	}
 
 	matrix := make([][]string, 0, len(window))
+	bars := make(map[int]bool, len(window))
 	for index, entry := range window {
 		cells := []string{" ", " "}
 		if entry.heading {
 			matrix = append(matrix, append(cells, groupHeadingCells(entry, columns)...))
 			continue
 		}
-		if index == cursor {
-			cells[barColumn] = styles.Glyph.Selection
+		// A heading never carries a mark: entry.flat is -1 for one, and the flat
+		// index a mark is keyed by only ever addresses a real row.
+		if index == cursor || marks.marked(entry.flat) {
+			cells[barColumn], bars[index] = styles.Glyph.Selection, true
 		}
 		cells[glyphColumn] = styles.rowGlyph(entry.row.Status)
 		matrix = append(matrix, append(cells, inventoryCells(entry.row, columns, styles)...))
@@ -346,7 +375,7 @@ func renderGroupedInventoryTable(rows []InventoryRow, selected, width, height in
 		BorderRight(false).BorderRow(false).BorderColumn(false).BorderHeader(false).
 		Headers(headers...).
 		Rows(matrix...).
-		StyleFunc(groupedStyleFunc(window, cursor, actionCellColumn(columns), styles)).
+		StyleFunc(groupedStyleFunc(window, cursor, bars, actionCellColumn(columns), styles)).
 		Render()
 
 	return fitLines(strings.Split(rendered, "\n"), width, height)
@@ -392,7 +421,10 @@ func muteActionCell(style lipgloss.Style, column, action, row int, styles ThemeS
 	return style.Foreground(styles.Palette.Muted.color())
 }
 
-func groupedStyleFunc(window []groupedEntry, cursor, action int, styles ThemeStyles) table.StyleFunc {
+// bars holds the window-relative rows whose selection bar is lit -- the cursor
+// row plus every marked row -- so the accent tone follows the glyph the render
+// loop already placed instead of being derived a second time from the cursor.
+func groupedStyleFunc(window []groupedEntry, cursor int, bars map[int]bool, action int, styles ThemeStyles) table.StyleFunc {
 	return func(row, column int) lipgloss.Style {
 		var style lipgloss.Style
 		heading := false
@@ -411,7 +443,7 @@ func groupedStyleFunc(window []groupedEntry, cursor, action int, styles ThemeSty
 
 		switch column {
 		case barColumn:
-			if row == cursor && row != table.HeaderRow {
+			if bars[row] && row != table.HeaderRow {
 				style = styles.SelectionBar
 			}
 		case glyphColumn:
@@ -450,7 +482,8 @@ func fitLines(lines []string, width, height int) []string {
 // inventoryStyleFunc maps (row, column) to a style. The row's semantic status
 // drives its color; selection adds a raised background and a weight bump on
 // top of it, so a selected broken row still reads as broken.
-func inventoryStyleFunc(window []InventoryRow, cursor, action int, styles ThemeStyles) table.StyleFunc {
+// bars carries the same "this row's marker is lit" set groupedStyleFunc takes.
+func inventoryStyleFunc(window []InventoryRow, cursor int, bars map[int]bool, action int, styles ThemeStyles) table.StyleFunc {
 	return func(row, column int) lipgloss.Style {
 		var style lipgloss.Style
 		switch {
@@ -464,7 +497,7 @@ func inventoryStyleFunc(window []InventoryRow, cursor, action int, styles ThemeS
 
 		switch column {
 		case barColumn:
-			if row == cursor && row != table.HeaderRow {
+			if bars[row] && row != table.HeaderRow {
 				style = styles.SelectionBar
 			}
 		case glyphColumn:
