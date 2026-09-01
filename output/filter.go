@@ -152,11 +152,20 @@ func FilterRows(rows []InventoryRow, state FilterState) []InventoryRow {
 // are built from typed events before facets are applied.
 func FilterReport(report ObservationReport, state FilterState) []InventoryRow {
 	state = state.normalized()
-	if state.View != ViewChanges && state.View != ViewIssues {
+	if !eventDrivenView(state.View) {
 		rows := FilterRows(InventoryRows(FilterObservations(observationsForView(report, state.View), state)), state)
 		return sortRowsForView(rows, state.View)
 	}
 	return FilterRows(RowsForReport(report, state.View), state)
+}
+
+// eventDrivenView reports whether a view's rows are built from typed change
+// events rather than from observations. Such a view has no observation set of
+// its own: an event is a pair of before/after states keyed on an identity, and
+// two events can name the same identity, so narrowing the report's buckets
+// could never produce the same list.
+func eventDrivenView(view ViewCategory) bool {
+	return view == ViewChanges || view == ViewIssues || view == ViewReview
 }
 
 // observationsForView narrows the report to one view's observations. The status
@@ -174,6 +183,12 @@ func observationsForView(report ObservationReport, view ViewCategory) []model.Ob
 		return report.Available
 	case ViewHistory:
 		return report.History
+	case ViewChanges, ViewIssues, ViewReview:
+		// Event-driven views hold no observations; their rows come from
+		// RowsForReport. Listed explicitly rather than left to the default,
+		// which would hand back the whole report -- Review claiming every
+		// entry on the machine would be a lie about what needs attention.
+		return []model.Observation{}
 	case ViewCLI, ViewPackages, ViewApplications, ViewPathExecutables, ViewNpxHistory, ViewManage, ViewDiscover:
 		all := report.AllObservations()
 		matching := make([]model.Observation, 0, len(all))
@@ -196,6 +211,12 @@ func CountForView(report ObservationReport, view ViewCategory) int {
 		return len(report.Changes.Events())
 	case ViewIssues:
 		return len(report.Changes.Broken) + len(report.Changes.Shadowed)
+	case ViewReview:
+		// Review is the sum of its three sections, which is every event exactly
+		// once: reviewSections partitions the seven categories rather than
+		// overlapping them, so Changes + Issues + New cannot double-count the
+		// broken and shadowed events that Events() already carries.
+		return len(report.Changes.Events())
 	case ViewOverview:
 		return len(report.AllObservations())
 	default:
