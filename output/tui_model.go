@@ -32,6 +32,13 @@ type resizeSettledMsg struct{ tag int }
 
 const newTabID = "new"
 
+// copyToClipboard yanks text into the system clipboard. It goes through the
+// terminal's OSC 52 sequence rather than pbcopy/wl-copy, which keeps the promise
+// output/actions.go opens with: no process is started and no shell is involved,
+// on any platform. It is a variable rather than a direct call so a test can
+// capture what a binding copied with no terminal attached.
+var copyToClipboard = tea.SetClipboard
+
 type tuiModel struct {
 	tabs        []string
 	toolsBySrc  map[string][]model.Tool
@@ -103,6 +110,14 @@ type keyMap struct {
 	Theme   key.Binding
 	Quit    key.Binding
 
+	// The action keys yank a command for the selected row onto the clipboard.
+	// What each one resolves to is decided entirely by KindActions in
+	// output/actions.go -- no command string is spelled anywhere near a binding.
+	UpdateCopy    key.Binding
+	UpdateCopyAll key.Binding
+	RemoveCopy    key.Binding
+	JumpManage    key.Binding
+
 	// reportTabs is the tab set the "?" digit list describes. FullHelp is a
 	// method on keyMap with no model to ask, so newObservationTUIModel hands
 	// the mode's resolved tabs here; nil (the legacy RunTUI path) means v2.
@@ -155,6 +170,24 @@ var defaultKeyMap = keyMap{
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
 	),
+	UpdateCopy: key.NewBinding(
+		key.WithKeys("u"),
+		key.WithHelp("u", "copy this row's action"),
+	),
+	// Shift-u. A terminal may report it as a bare uppercase rune or as lowercase
+	// plus a shift modifier; both stringify to "U", so one key covers both.
+	UpdateCopyAll: key.NewBinding(
+		key.WithKeys("U"),
+		key.WithHelp("U", "copy every update here"),
+	),
+	RemoveCopy: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "copy this row's uninstall"),
+	),
+	JumpManage: key.NewBinding(
+		key.WithKeys("m"),
+		key.WithHelp("m", "manage"),
+	),
 }
 
 // ShortHelp returns the handful of bindings shown in the collapsed footer.
@@ -172,13 +205,16 @@ func (k keyMap) ShortHelp() []key.Binding {
 // FullHelp returns every binding, grouped into columns, for the expanded
 // help view toggled by "?". The last two columns are the view digits with what
 // each view *means*, so "?" answers "where do I find my Homebrew apps" and not
-// only "which key moves down".
+// only "which key moves down". The action keys get a column of their own rather
+// than lengthening the global one: the footer budgets its height from the
+// tallest column, so a fifth entry there would cost every layout a row.
 func (k keyMap) FullHelp() [][]key.Binding {
 	digits := viewHelpBindings(k.reportTabs)
 	split := (len(digits) + 1) / 2
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PrevTab, k.NextTab, k.JumpTab},
 		{k.Filter, k.Diff, k.Save, k.Help, k.Theme, k.Quit},
+		{k.UpdateCopy, k.UpdateCopyAll, k.RemoveCopy, k.JumpManage},
 		digits[:split],
 		digits[split:],
 	}

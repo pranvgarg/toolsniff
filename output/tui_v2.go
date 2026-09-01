@@ -209,27 +209,35 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(keyMsg, m.keys.NextTab):
 				tabs := reportTabsForMode(m.report.uiMode)
 				index := (reportTabIndex(m.report.uiMode, m.report.state.View) + 1) % len(tabs)
-				m.report.state.View = reportViewForTab(m.report.uiMode, index)
-				m.report.drawer.State = m.report.state
-				m.report.rebuildRows()
-				m.syncReportShell()
+				m.openReportView(reportViewForTab(m.report.uiMode, index))
 				return m, nil
 			case key.Matches(keyMsg, m.keys.PrevTab):
 				tabs := reportTabsForMode(m.report.uiMode)
 				index := (reportTabIndex(m.report.uiMode, m.report.state.View) - 1 + len(tabs)) % len(tabs)
-				m.report.state.View = reportViewForTab(m.report.uiMode, index)
-				m.report.drawer.State = m.report.state
-				m.report.rebuildRows()
-				m.syncReportShell()
+				m.openReportView(reportViewForTab(m.report.uiMode, index))
 				return m, nil
 			case key.Matches(keyMsg, m.keys.JumpTab):
+				// One digit ladder for both modes: v2 answers 1-8, v3 answers 1-4
+				// (Manage/Discover/Review/Health) and ignores 5-9, because the bound
+				// is the active mode's tab count.
 				if index := int(keyName[0] - '1'); index >= 0 && index < len(reportTabsForMode(m.report.uiMode)) {
-					m.report.state.View = reportViewForTab(m.report.uiMode, index)
-					m.report.drawer.State = m.report.state
-					m.report.rebuildRows()
-					m.syncReportShell()
+					m.openReportView(reportViewForTab(m.report.uiMode, index))
 				}
 				return m, nil
+			case key.Matches(keyMsg, m.keys.JumpManage):
+				// Intent-first navigation only. v2's tabs are kind-first and have no
+				// single "everything a manager installed" pane to land on, so rather
+				// than picking an arbitrary near-miss the key stays inert there.
+				if m.report.uiMode == uiModeV3 {
+					m.openReportView(ViewManage)
+				}
+				return m, nil
+			case key.Matches(keyMsg, m.keys.UpdateCopy):
+				return m, m.yankSelected(PrimaryActionCommand, "no runnable action for this entry")
+			case key.Matches(keyMsg, m.keys.RemoveCopy):
+				return m, m.yankSelected(PrimaryRemoveCommand, "nothing here knows how to uninstall this entry")
+			case key.Matches(keyMsg, m.keys.UpdateCopyAll):
+				return m, m.yankEveryUpdate()
 			}
 		}
 	}
@@ -241,6 +249,69 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncReportShell()
 	m.resizeContent()
 	return m, cmd
+}
+
+// openReportView switches the open pane, keeping the filter drawer's copy of the
+// state and the shell's tab highlight in step. Every navigation key routes
+// through here so none of them can forget one of the three.
+func (m *tuiModel) openReportView(view ViewCategory) {
+	m.report.state.View = view
+	m.report.drawer.State = m.report.state
+	m.report.rebuildRows()
+	m.syncReportShell()
+}
+
+// setReportStatus is the single way the action keys speak: the report owns the
+// message and syncReportShell mirrors it onto the shell, so the two can't show
+// different text. The re-layout is needed because the status line is part of the
+// footer's height budget.
+func (m *tuiModel) setReportStatus(text string) {
+	m.report.status = text
+	m.syncReportShell()
+	m.resizeContent()
+}
+
+// yankSelected copies the selected row's command for one action verb and reports
+// what happened either way. The verb is passed in as the accessor from
+// output/actions.go that defines it, so this function never decides what "update"
+// or "remove" means for a given manager -- it only moves the result.
+func (m *tuiModel) yankSelected(command func(model.Observation) ([]string, bool), missing string) tea.Cmd {
+	observation, ok := m.report.selectedObservation()
+	if !ok {
+		m.setReportStatus("no row selected")
+		return nil
+	}
+	argv, ok := command(observation)
+	if !ok {
+		m.setReportStatus(missing)
+		return nil
+	}
+	line := strings.Join(argv, " ")
+	m.setReportStatus("copied: " + line)
+	return copyToClipboard(line)
+}
+
+// yankEveryUpdate copies one upgrade command per line for every row in the open
+// view that has one, in the order the pane lists them: a paste-ready block for a
+// shell, scoped to whatever the user has filtered down to rather than to the
+// whole machine.
+func (m *tuiModel) yankEveryUpdate() tea.Cmd {
+	var lines []string
+	for _, observation := range m.report.rowObservations() {
+		if argv, ok := PrimaryUpdateCommand(observation); ok {
+			lines = append(lines, strings.Join(argv, " "))
+		}
+	}
+	if len(lines) == 0 {
+		m.setReportStatus("nothing in this view can be updated in place")
+		return nil
+	}
+	noun := "update commands"
+	if len(lines) == 1 {
+		noun = "update command"
+	}
+	m.setReportStatus(fmt.Sprintf("copied %d %s", len(lines), noun))
+	return copyToClipboard(strings.Join(lines, "\n"))
 }
 
 func (m *tuiModel) syncReportShell() {
@@ -281,6 +352,19 @@ func (m tuiModel) reportContentLines(width, height int) []string {
 		}
 		return padPane(append(lines, renderOverview(m.report.report, m.styles, width, body)...), width, height)
 	}
+	if m.report.state.View == ViewHealth {
+		// Alongside the overview rather than in the switch below, for the two
+		// reasons that make Health a dashboard: it writes its own title, so the
+		// generic "label · count · meaning" caption would say the pane's name
+		// twice; and it has no rows, so the empty-rows branch would replace four
+		// truthful zeroes with "nothing of this sort found on this machine".
+		body := height - len(lines)
+		if body < 1 {
+			body = 1
+		}
+		return padPane(append(lines,
+			renderHealth(m.report.report, m.report.selected, m.styles, width, body)...), width, height)
+	}
 
 	// Every non-overview pane leads with its caption: the view's title, its
 	// count, and what it means. This is where "available" is spelled out as
@@ -302,6 +386,12 @@ func (m tuiModel) reportContentLines(width, height int) []string {
 			message = "Nothing of this sort found on this machine."
 		}
 		lines = append(lines, m.styles.EmptyState.Render(message))
+	case m.report.state.View == ViewReview:
+		// Ahead of the change-list case: Review is event-driven like Changes and
+		// Issues, but it renders those events as grouped inventory rows rather
+		// than as the v2 category list, so the intent views can diverge from the
+		// v2 panes without disturbing them.
+		lines = append(lines, renderReviewRows(m.report.rows, m.report.selected, width, body, m.styles)...)
 	case m.report.state.View == ViewChanges || m.report.state.View == ViewIssues:
 		lines = append(lines, renderChangeLines(m.report.report.Changes, m.styles)...)
 	case m.report.state.View == ViewManage:
@@ -309,6 +399,13 @@ func (m tuiModel) reportContentLines(width, height int) []string {
 		// owns its own renderer so the intent views can diverge from the
 		// kind-first panes without disturbing them.
 		lines = append(lines, renderManageRows(m.report.rows, m.report.selected, width, body, m.styles)...)
+	case m.report.state.View == ViewDiscover:
+		// Manage's complement, and grouped by directory rather than by manager,
+		// so it owns its renderer for the same reason Manage does. The tip is
+		// derived from the whole report -- which manager owns the most of this
+		// machine is not a fact the filtered rows can answer.
+		lines = append(lines, renderDiscoverRows(m.report.rows,
+			discoverSuggestion(m.report.report, m.report.rows), m.report.selected, width, body, m.styles)...)
 	case groupedView(m.report.state.View):
 		lines = append(lines, m.groupedInventoryPane(m.report.rows, m.report.selected, width, body)...)
 	default:
@@ -347,6 +444,25 @@ func (m *reportTUIModel) selectedObservation() (model.Observation, bool) {
 		}
 	}
 	return model.Observation{}, false
+}
+
+// rowObservations resolves every row in the open view to its observation, in row
+// order. It indexes the report once instead of calling selectedObservation per
+// row, whose linear scan would turn a bulk yank over a few thousand entries
+// quadratic.
+func (m *reportTUIModel) rowObservations() []model.Observation {
+	all := m.report.AllObservations()
+	byID := make(map[string]model.Observation, len(all))
+	for _, observation := range all {
+		byID[observation.ID] = observation
+	}
+	observations := make([]model.Observation, 0, len(m.rows))
+	for _, row := range m.rows {
+		if observation, ok := byID[row.ObservationID]; ok {
+			observations = append(observations, observation)
+		}
+	}
+	return observations
 }
 
 func (m *reportTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

@@ -259,6 +259,223 @@ func TestObservationTUIKeepsV2InteractionsInsideShell(t *testing.T) {
 	}
 }
 
+// captureClipboard swaps the OSC 52 write for a recorder, so the action-key
+// tests can assert on what a binding yanked with no terminal attached. The
+// returned function reports the most recent copy.
+func captureClipboard(t *testing.T) func() string {
+	t.Helper()
+	original := copyToClipboard
+	var copied string
+	copyToClipboard = func(text string) tea.Cmd {
+		copied = text
+		return nil
+	}
+	t.Cleanup(func() { copyToClipboard = original })
+	return func() string { return copied }
+}
+
+// v3Shell builds a v3 shell over the given observations, sized and past the
+// splash so Update behaves as it does in a running program.
+func v3Shell(t *testing.T, installed ...model.Observation) tuiModel {
+	t.Helper()
+	m := newObservationTUIModel(
+		NewObservationReport(installed, nil, nil, emptyObservationDiff(), nil),
+		TUIOptions{UIMode: uiModeV3},
+	)
+	m.splashPhase = splashDone
+	m.width, m.height = 100, 30
+	m.resizeContent()
+	return m
+}
+
+func brewObservation(name string) model.Observation {
+	observation := observation(name, model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	observation.Origin = model.Origin{Provider: "homebrew", Manager: "formula", Package: name}
+	observation.ID = model.ObservationIdentity(observation)
+	return observation
+}
+
+func TestV3DigitKeysJumpToTabs(t *testing.T) {
+	m := v3Shell(t, observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh}))
+
+	for digit, want := range map[string]ViewCategory{
+		"1": ViewManage, "2": ViewDiscover, "3": ViewReview, "4": ViewHealth,
+	} {
+		updated, _ := m.Update(testKey(digit))
+		shell := updated.(tuiModel)
+		if shell.report.state.View != want {
+			t.Errorf("v3 %q opened %q, want %q", digit, shell.report.state.View, want)
+		}
+		if got := shell.activeTab; got != reportTabIndex(uiModeV3, want) {
+			t.Errorf("v3 %q left the tab highlight on %d", digit, got)
+		}
+	}
+
+	// v3 has four tabs, so the digits past them are inert rather than wrapping
+	// onto a v2 view that this mode does not show.
+	m.Update(testKey("1"))
+	updated, _ := m.Update(testKey("5"))
+	if view := updated.(tuiModel).report.state.View; view != ViewManage {
+		t.Errorf("v3 \"5\" moved off Manage to %q", view)
+	}
+}
+
+func TestV3JumpManageKeyReturnsToManage(t *testing.T) {
+	m := v3Shell(t, observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh}))
+
+	m.Update(testKey("4"))
+	if m.report.state.View != ViewHealth {
+		t.Fatalf("setup failed: view = %q", m.report.state.View)
+	}
+	updated, _ := m.Update(testKey("m"))
+	if view := updated.(tuiModel).report.state.View; view != ViewManage {
+		t.Fatalf("m opened %q, want %q", view, ViewManage)
+	}
+}
+
+func TestUpdateCopyUsesPrimaryActionCommand(t *testing.T) {
+	clipboard := captureClipboard(t)
+	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	m := v3Shell(t, npm)
+
+	observation, ok := m.report.selectedObservation()
+	if !ok {
+		t.Fatal("no row selected on the Manage tab")
+	}
+	argv, ok := PrimaryActionCommand(observation)
+	if !ok {
+		t.Fatal("the npm row has no runnable primary action")
+	}
+	want := strings.Join(argv, " ")
+
+	m.Update(testKey("u"))
+	if got := clipboard(); got != want {
+		t.Fatalf("u copied %q, want PrimaryActionCommand's %q", got, want)
+	}
+	if m.report.status != "copied: "+want {
+		t.Fatalf("u status = %q", m.report.status)
+	}
+}
+
+func TestRemoveCopyUsesPrimaryRemoveCommand(t *testing.T) {
+	clipboard := captureClipboard(t)
+	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	m := v3Shell(t, npm)
+
+	observation, _ := m.report.selectedObservation()
+	argv, ok := PrimaryRemoveCommand(observation)
+	if !ok {
+		t.Fatal("the npm row has no uninstall command")
+	}
+	want := strings.Join(argv, " ")
+	// The point of a separate accessor: remove must not resolve to the update
+	// that PrimaryActionCommand hands back for this same row.
+	if primary, _ := PrimaryActionCommand(observation); strings.Join(primary, " ") == want {
+		t.Fatal("remove and primary resolved to the same command; the test proves nothing")
+	}
+
+	m.Update(testKey("x"))
+	if got := clipboard(); got != want {
+		t.Fatalf("x copied %q, want PrimaryRemoveCommand's %q", got, want)
+	}
+}
+
+// A macOS application has an Open action but nothing that uninstalls it, so the
+// remove key must say so rather than fall through to whatever else is offered.
+func TestRemoveCopyIsInertWithoutAnUninstall(t *testing.T) {
+	clipboard := captureClipboard(t)
+	app := observationWithPath("Xcode", model.RoleInstalled, model.KindApplication,
+		model.VersionInfo{Value: "16.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh},
+		"/Applications/Xcode.app")
+	app.Origin = model.Origin{Provider: "applications"}
+	app.ID = model.ObservationIdentity(app)
+	m := v3Shell(t, app)
+
+	m.Update(testKey("x"))
+	if got := clipboard(); got != "" {
+		t.Fatalf("x copied %q for an entry with no uninstall", got)
+	}
+	if m.report.status == "" || strings.HasPrefix(m.report.status, "copied") {
+		t.Fatalf("x status = %q, want an explanation", m.report.status)
+	}
+}
+
+func TestUpdateCopyAllYanksEveryUpdatableRow(t *testing.T) {
+	clipboard := captureClipboard(t)
+	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	brew := brewObservation("wget")
+	// pipx offers an uninstall but no in-place upgrade, so it must not appear in
+	// the bulk yank even though it is a managed row on the same tab.
+	pipx := observation("black", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "24.1.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	pipx.Origin = model.Origin{Provider: "pipx", Package: "black"}
+	pipx.ID = model.ObservationIdentity(pipx)
+
+	m := v3Shell(t, npm, brew, pipx)
+	m.Update(testKey("U"))
+
+	lines := strings.Split(clipboard(), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("U copied %d lines, want 2 (the updatable rows): %q", len(lines), clipboard())
+	}
+	for _, observation := range []model.Observation{npm, brew} {
+		argv, ok := PrimaryUpdateCommand(observation)
+		if !ok {
+			t.Fatalf("%s is not updatable; the fixture is wrong", observation.DisplayName)
+		}
+		if !strings.Contains(clipboard(), strings.Join(argv, " ")) {
+			t.Errorf("U omitted %q", strings.Join(argv, " "))
+		}
+	}
+	if _, ok := PrimaryUpdateCommand(pipx); ok {
+		t.Fatal("pipx became updatable; the fixture no longer proves the filter")
+	}
+	if want := "copied 2 update commands"; m.report.status != want {
+		t.Fatalf("U status = %q, want %q", m.report.status, want)
+	}
+}
+
+func TestV2DigitKeysUnchanged(t *testing.T) {
+	clipboard := captureClipboard(t)
+	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
+		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
+	m := newObservationTUIModel(NewObservationReport([]model.Observation{npm}, nil, nil, emptyObservationDiff(), nil), TUIOptions{})
+	m.splashPhase = splashDone
+	m.width, m.height = 100, 30
+	m.resizeContent()
+
+	// The v2 digit ladder is untouched: 1 is still the overview dashboard, not
+	// the v3 Manage pane, and the tabs past v3's four still work.
+	for digit, want := range map[string]ViewCategory{
+		"1": ViewOverview, "3": ViewPackages, "5": ViewPathExecutables, "8": ViewIssues,
+	} {
+		updated, _ := m.Update(testKey(digit))
+		if view := updated.(tuiModel).report.state.View; view != want {
+			t.Errorf("v2 %q opened %q, want %q", digit, view, want)
+		}
+	}
+
+	// m has no intent-first tab to jump to in v2, so it must leave the view alone.
+	m.Update(testKey("3"))
+	updated, _ := m.Update(testKey("m"))
+	if view := updated.(tuiModel).report.state.View; view != ViewPackages {
+		t.Fatalf("v2 \"m\" moved off Packages to %q", view)
+	}
+
+	// The action keys are not v3-only: they act on the selected row in v2 too.
+	m.Update(testKey("u"))
+	argv, _ := PrimaryActionCommand(npm)
+	if got, want := clipboard(), strings.Join(argv, " "); got != want {
+		t.Fatalf("v2 u copied %q, want %q", got, want)
+	}
+}
+
 func testKey(text string) tea.KeyPressMsg {
 	switch text {
 	case "enter":
