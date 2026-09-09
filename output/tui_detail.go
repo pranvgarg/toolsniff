@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/pranvgarg/toolsniff/capabilities"
 	"github.com/pranvgarg/toolsniff/model"
 )
 
@@ -74,6 +75,11 @@ func BuildDetailViewModel(observation model.Observation) DetailViewModel {
 			}},
 		},
 	}
+
+	detail.Sections = append(detail.Sections, DetailSection{
+		Title:  "Capabilities",
+		Fields: capabilityFields(observation),
+	})
 
 	if len(observation.Locations) > 0 {
 		fields := make([]DetailField, 0, len(observation.Locations))
@@ -210,6 +216,36 @@ func RevealLocationCommand(path string) ([]string, error) {
 		return nil, fmt.Errorf("location path is empty")
 	}
 	return []string{"open", "-R", filepath.Clean(path)}, nil
+}
+
+// capabilityFields runs the same capability detection --capabilities
+// exposes as JSON, scoped to this one observation, so the detail pane and
+// the --capabilities flag can never disagree about what a tool can do.
+func capabilityFields(observation model.Observation) []DetailField {
+	results := capabilities.DefaultRegistry().Detect([]model.Observation{observation})
+	if len(results) == 0 {
+		return []DetailField{{Label: "Capabilities", Value: "none detected"}}
+	}
+	fields := make([]DetailField, 0, len(results))
+	for _, result := range results {
+		fields = append(fields, DetailField{
+			Label: string(result.Capability.Kind),
+			Value: capabilityDetail(result),
+		})
+	}
+	return fields
+}
+
+func capabilityDetail(result capabilities.Result) string {
+	for _, evidence := range result.Capability.Evidence {
+		if evidence.Type == "probe" && evidence.Detail != "" {
+			return evidence.Detail
+		}
+	}
+	if len(result.Capability.Evidence) > 0 {
+		return result.Capability.Evidence[0].Detail
+	}
+	return "detected"
 }
 
 func emptyValue(value string) string {
