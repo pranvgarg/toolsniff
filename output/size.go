@@ -50,10 +50,12 @@ func FormatBytes(bytes int64) string {
 		return fmt.Sprintf("%d B", bytes)
 	}
 	div, exp := int64(unit), 0
-	for n := bytes / unit; n >= unit; n /= unit {
+	units := []string{"KB", "MB", "GB"}
+	// Loop scales up, but stops before trying to use a 4th unit (TiB),
+	// so anything >= 1TiB renders as a large GB number instead of panicking.
+	for n := bytes / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
 	}
-	units := []string{"KB", "MB", "GB"}
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), units[exp])
 }
