@@ -59,6 +59,7 @@ func BuildDetailViewModel(observation model.Observation) DetailViewModel {
 				{Label: "Kind", Value: string(observation.Kind)},
 				{Label: "Status", Value: StatusDisplayLabel(ObservationStatus(observation))},
 				{Label: "Source", Value: ObservationSource(observation)},
+				{Label: "Size", Value: observationSizeLabel(observation)},
 			}},
 			{Title: "Version", Fields: []DetailField{
 				{Label: "Version", Value: DisplayVersion(observation.Version)},
@@ -267,4 +268,21 @@ func optionalBool(value *bool) string {
 		return "n/a"
 	}
 	return yesNo(*value)
+}
+
+// observationSizeLabel measures the first location's on-disk footprint.
+// Measurement happens here, at detail-view build time, not in InventoryRows
+// (output/report.go) -- InventoryRows runs on every repaint, and a
+// filesystem walk does not belong on that path. Opening one item's detail
+// pane is a deliberate, infrequent action, which is exactly the boundary
+// DirectorySize's doc comment already draws.
+func observationSizeLabel(observation model.Observation) string {
+	if len(observation.Locations) == 0 {
+		return "size unavailable"
+	}
+	size, err := DirectorySize(observation.Locations[0].Path)
+	if err != nil {
+		return "size unavailable"
+	}
+	return FormatBytes(size)
 }
