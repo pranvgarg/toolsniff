@@ -352,19 +352,19 @@ func TestSplitByRole(t *testing.T) {
 }
 
 func TestValidateFlagsRequiresDiffForAvailability(t *testing.T) {
-	if err := validateFlags(true, false, false, false); err == nil {
+	if err := validateFlags(true, false, false, false, false); err == nil {
 		t.Fatal("expected --available without --diff to be rejected")
 	}
-	if err := validateFlags(true, true, false, false); err != nil {
+	if err := validateFlags(true, true, false, false, false); err != nil {
 		t.Fatalf("expected --available with --diff to be accepted: %v", err)
 	}
-	if err := validateFlags(false, false, true, false); err != nil {
+	if err := validateFlags(false, false, true, false, false); err != nil {
 		t.Fatalf("expected --update to be accepted: %v", err)
 	}
-	if err := validateFlags(false, false, false, true); err == nil {
-		t.Fatal("expected --yes without --update to be rejected")
+	if err := validateFlags(false, false, false, false, true); err == nil {
+		t.Fatal("expected --yes without --update or --init-config to be rejected")
 	}
-	if err := validateFlags(false, false, false, false); err != nil {
+	if err := validateFlags(false, false, false, false, false); err != nil {
 		t.Fatalf("expected ordinary mode to be accepted: %v", err)
 	}
 }
@@ -651,6 +651,33 @@ func TestParseFlagsHelpListsUIModeFlags(t *testing.T) {
 		if !strings.Contains(usage, name) {
 			t.Fatalf("--help output missing %s:\n%s", name, usage)
 		}
+	}
+}
+
+func TestInitConfigWritesLoadableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	var out, errOut bytes.Buffer
+	code := Run([]string{"--init-config", "--config", path}, nil, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("Run(--init-config) = %d, stderr: %s", code, errOut.String())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("config file not written: %v", err)
+	}
+	if !strings.Contains(out.String(), path) {
+		t.Fatalf("output missing config path: %s", out.String())
+	}
+}
+
+func TestInitConfigRefusesToOverwriteWithoutYes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"--init-config", "--config", path}, nil, &out, &errOut); code != 0 {
+		t.Fatalf("first --init-config failed: %s", errOut.String())
+	}
+	errOut.Reset()
+	if code := Run([]string{"--init-config", "--config", path}, nil, &out, &errOut); code == 0 {
+		t.Fatal("second --init-config without --yes should have failed")
 	}
 }
 

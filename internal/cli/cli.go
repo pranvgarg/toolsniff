@@ -61,6 +61,14 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 	if options.snapshots {
 		return listSnapshots(outputWriter, errorOutput)
 	}
+	if options.initConfig {
+		if err := config.WriteDefaultConfig(options.configPath, options.yes); err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 1
+		}
+		fmt.Fprintf(outputWriter, "wrote starter config: %s\n", options.configPath)
+		return 0
+	}
 
 	settings, err := config.Load(options.configPath)
 	if err != nil {
@@ -110,6 +118,7 @@ type cliOptions struct {
 	update            bool
 	yes               bool
 	version           bool
+	initConfig        bool
 	configPath        string
 	legacyTabs        bool
 	intentTabs        bool
@@ -136,6 +145,7 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 	flags.BoolVar(&options.update, "update", false, "update the Homebrew-installed toolsniff binary and exit")
 	flags.BoolVar(&options.yes, "yes", false, "confirm --update without prompting")
 	flags.BoolVar(&options.version, "version", false, "print the toolsniff version and exit")
+	flags.BoolVar(&options.initConfig, "init-config", false, "write a starter TOML config to --config's path and exit")
 	flags.StringVar(&options.configPath, "config", config.DefaultConfigPath(), "path to the TOML configuration file")
 	flags.BoolVar(&options.legacyTabs, "legacy-tabs", false, "use the original eight-tab layout instead of the intent-based tabs")
 	flags.BoolVar(&options.intentTabs, "intent-tabs", false, "use the intent-based four-tab layout (Manage/Discover/Review/Health) instead of the eight-tab layout")
@@ -169,6 +179,7 @@ func validateMode(options cliOptions) error {
 		options.snapshots,
 		options.update,
 		options.version,
+		options.initConfig,
 		options.exportSet,
 		options.compareSet,
 		options.supportSet,
@@ -195,7 +206,7 @@ func validateMode(options cliOptions) error {
 	if options.capabilitiesProbe && !options.capabilities {
 		return errors.New("--capabilities-probe may only be used with --capabilities")
 	}
-	return validateFlags(options.available, options.diff, options.update, options.yes)
+	return validateFlags(options.available, options.diff, options.update, options.initConfig, options.yes)
 }
 
 func buildScanners(settings config.Settings) []scanner.Registration {
@@ -315,12 +326,12 @@ func registrationSources(registrations []scanner.Registration) []scanner.SourceI
 	return sources
 }
 
-func validateFlags(available, diff, updateMode, yes bool) error {
+func validateFlags(available, diff, updateMode, initConfigMode, yes bool) error {
 	if available && !diff {
 		return errors.New("--available may only be used with --diff")
 	}
-	if yes && !updateMode {
-		return errors.New("--yes may only be used with --update")
+	if yes && !updateMode && !initConfigMode {
+		return errors.New("--yes may only be used with --update or --init-config")
 	}
 	return nil
 }

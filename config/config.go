@@ -308,6 +308,47 @@ func SaveTheme(path string, theme ThemeSettings) error {
 	return writeConfigAtomically(path, data)
 }
 
+// WriteDefaultConfig writes DefaultSettings() to path as a starter TOML
+// file. It refuses to clobber an existing file unless overwrite is true, so
+// --init-config is safe to run twice by accident but --init-config --yes can
+// deliberately reset a broken config.
+func WriteDefaultConfig(path string, overwrite bool) error {
+	if path == "" {
+		return fmt.Errorf("config: empty config path")
+	}
+	path = expandPath(path)
+	if !overwrite {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("config: %s already exists (pass --yes to overwrite)", path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("config: checking %s: %w", path, err)
+		}
+	}
+
+	defaults := DefaultSettings()
+	var file fileConfig
+	file.Applications.Roots = defaults.Applications.Roots
+	file.Applications.IgnorePath = defaults.Applications.IgnorePath
+	file.Path.Directories = defaults.Path.Directories
+	file.Path.Excluded = defaults.Path.Excluded
+	file.Path.IgnoreNames = defaults.Path.IgnoreNames
+	enabled := defaults.Bun.Enabled
+	file.Bun.Enabled = &enabled
+	file.Theme.Preset = defaults.Theme.Preset
+	file.Theme.Colors = defaults.Theme.Colors
+	file.UI.Mode = defaults.UI.Mode
+	file.NPX.Dir = defaults.NPXDir
+	file.Cargo.BinDir = defaults.CargoBinDir
+	file.Registry.Path = defaults.RegistryPath
+	file.Execution.Timeout = defaults.ExecTimeout.String()
+
+	data, err := toml.Marshal(file)
+	if err != nil {
+		return fmt.Errorf("config: serializing default config: %w", err)
+	}
+	return writeConfigAtomically(path, data)
+}
+
 func writeConfigAtomically(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
