@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pranvgarg/toolsniff/config"
+	"github.com/pranvgarg/toolsniff/internal/update"
 	"github.com/pranvgarg/toolsniff/model"
 	"github.com/pranvgarg/toolsniff/profile"
 	"github.com/pranvgarg/toolsniff/registry"
@@ -173,6 +174,35 @@ func TestDoctorRendersTypedDiagnosticsAndProvenance(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Errorf("doctor output missing %q:\n%s", expected, output)
 		}
+	}
+}
+
+func TestDoctorWarnsOnAmbiguousHomebrewInstall(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		if name == "brew" && len(args) >= 2 && args[0] == "list" {
+			return []byte("toolsniff\n"), nil // both --formula and --cask "succeed"
+		}
+		return []byte("brew 4.0.0\n"), nil
+	}
+	report := renderDoctorReportWithUpdateService(nil, update.NewService(runner))
+	if !strings.Contains(report, "installed as both a Homebrew formula and cask") {
+		t.Fatalf("doctor report missing ambiguous-install warning: %s", report)
+	}
+}
+
+func TestDoctorSilentWhenHomebrewInstallIsUnambiguous(t *testing.T) {
+	runner := func(name string, args ...string) ([]byte, error) {
+		if name == "brew" && len(args) >= 2 && args[0] == "list" && args[1] == "--formula" {
+			return []byte("toolsniff\n"), nil
+		}
+		if name == "brew" && len(args) >= 2 && args[0] == "list" && args[1] == "--cask" {
+			return nil, fmt.Errorf("no cask installed")
+		}
+		return []byte("brew 4.0.0\n"), nil
+	}
+	report := renderDoctorReportWithUpdateService(nil, update.NewService(runner))
+	if strings.Contains(report, "WARNING") {
+		t.Fatalf("doctor report should not warn on a clean install: %s", report)
 	}
 }
 

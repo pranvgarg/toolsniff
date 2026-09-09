@@ -488,9 +488,16 @@ func listSnapshots(outputWriter, errorOutput io.Writer) int {
 }
 
 func renderDoctorReport(observations []model.Observation) string {
+	return renderDoctorReportWithUpdateService(observations, update.NewService(nil))
+}
+
+func renderDoctorReportWithUpdateService(observations []model.Observation, updateService *update.Service) string {
 	report := diagnostics.Analyze(observations)
 	var b strings.Builder
 	fmt.Fprintln(&b, "TOOLSNIFF DOCTOR")
+	if _, err := updateService.DetectInstallation(); errors.Is(err, update.ErrAmbiguousInstallation) {
+		fmt.Fprintln(&b, "WARNING: toolsniff itself is installed as both a Homebrew formula and cask — uninstall one to avoid conflicts.")
+	}
 	fmt.Fprintf(&b, "OBSERVATIONS: %d\n", len(observations))
 	fmt.Fprintf(&b, "ISSUES: %d\n", len(report.Issues))
 	for _, issue := range report.Issues {
