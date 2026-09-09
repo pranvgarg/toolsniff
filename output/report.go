@@ -191,6 +191,10 @@ type InventoryRow struct {
 	// is the one fact Source cannot answer for entries no manager installed.
 	// Empty when the scanner recorded no location.
 	Path string
+	// SizeBytes is zero until populated by populateRowSizes (Task 10) --
+	// InventoryRows itself stays a pure, cheap transform, since every list
+	// view repaints on every keystroke and disk measurement is not.
+	SizeBytes int64
 }
 
 // InventoryRows converts observations to responsive presentation data in one

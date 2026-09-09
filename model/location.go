@@ -33,6 +33,11 @@ type Location struct {
 	ModifiedAt    *time.Time   `json:"modified_at,omitempty"`
 	Architectures []string     `json:"architectures,omitempty"`
 	SHA256        string       `json:"sha256,omitempty"`
+	// SizeBytes is computed on demand (see output.DirectorySize), never
+	// persisted to the registry baseline, and zero when not yet measured.
+	// Shared field name/type with docs/mole/integration-plan.md's P-A --
+	// both efforts read the same primitive.
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 }
 
 func (l Location) Validate() error {
