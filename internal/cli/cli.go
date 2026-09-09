@@ -81,6 +81,8 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 	installedObservations, availableObservations, historyObservations := splitObservations(observations)
 
 	regPath := settings.RegistryPath
+	_, baselineStatErr := os.Stat(regPath)
+	baselineExists := baselineStatErr == nil
 	baseline, regWarning := registry.LoadObservations(regPath)
 	if regWarning != "" {
 		warnings = append(warnings, scanner.Warning{Source: "registry", Err: errors.New(regWarning)})
@@ -95,7 +97,7 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 	reportChanges := mergeObservationDiffs(diff, availabilityDiff)
 	report := output.NewObservationReport(installedObservations, availableObservations, historyObservations, reportChanges, warningStrings(warnings))
 
-	return dispatchReport(options, settings, registrations, installedObservations, availableObservations, report, diff, availabilityDiff, warnings, appVersion, outputWriter, errorOutput)
+	return dispatchReport(options, settings, registrations, installedObservations, availableObservations, report, diff, availabilityDiff, warnings, appVersion, baselineExists, outputWriter, errorOutput)
 }
 
 type cliOptions struct {
@@ -336,7 +338,7 @@ func validateFlags(available, diff, updateMode, initConfigMode, yes bool) error 
 	return nil
 }
 
-func dispatchReport(options cliOptions, settings config.Settings, registrations []scanner.Registration, installedObservations, availableObservations []model.Observation, report output.ObservationReport, diff, availabilityDiff registry.ObservationDiff, warnings []scanner.Warning, appVersion string, outputWriter, errorOutput io.Writer) int {
+func dispatchReport(options cliOptions, settings config.Settings, registrations []scanner.Registration, installedObservations, availableObservations []model.Observation, report output.ObservationReport, diff, availabilityDiff registry.ObservationDiff, warnings []scanner.Warning, appVersion string, baselineExists bool, outputWriter, errorOutput io.Writer) int {
 	regPath := settings.RegistryPath
 	switch {
 	case options.save:
@@ -351,6 +353,11 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 		fmt.Fprintf(outputWriter, "saved baseline: %d installed tools, %d available commands\n", len(installedObservations), len(availableObservations))
 		writeWarnings(errorOutput, warnings)
 	case options.diff:
+		if !baselineExists {
+			fmt.Fprintln(outputWriter, "no baseline yet — run --save first, then --diff will show what changed")
+			writeWarnings(errorOutput, warnings)
+			break
+		}
 		fmt.Fprint(outputWriter, renderObservationDiff(diff))
 		if options.available {
 			fmt.Fprintln(outputWriter, "AVAILABILITY CHANGES")

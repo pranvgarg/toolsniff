@@ -681,6 +681,26 @@ func TestInitConfigRefusesToOverwriteWithoutYes(t *testing.T) {
 	}
 }
 
+func TestDiffWithNoBaselineSaysSoInsteadOfListingEverythingAsNew(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "config.toml")
+	regPath := filepath.Join(tmp, "registry.json")
+	if err := os.WriteFile(configPath, []byte("[registry]\npath = \""+regPath+"\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	var out, errOut bytes.Buffer
+	code := Run([]string{"--diff", "--config", configPath}, nil, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("Run(--diff, no baseline) = %d, stderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "no baseline yet") {
+		t.Fatalf("--diff with no baseline should say so, got: %s", out.String())
+	}
+	if strings.Contains(out.String(), "ADDED") {
+		t.Fatalf("--diff with no baseline should not print a change report, got: %s", out.String())
+	}
+}
+
 func toolsEqual(a, b []model.Tool) bool {
 	if len(a) != len(b) {
 		return false
