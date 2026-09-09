@@ -209,11 +209,11 @@ func InventoryRows(observations []model.Observation) []InventoryRow {
 
 // RowsForReport returns rows for the selected primary view, including the
 // kind-first views (see output/kinds.go) and the status lenses they replaced.
-func RowsForReport(report ObservationReport, view ViewCategory) []InventoryRow {
+func RowsForReport(report ObservationReport, view ViewCategory, bySize bool) []InventoryRow {
 	if eventDrivenView(view) {
 		return rowsForEvents(report.Changes, view)
 	}
-	return sortRowsForView(InventoryRows(observationsForView(report, view)), view)
+	return sortRowsForViewWithSize(InventoryRows(observationsForView(report, view)), view, bySize)
 }
 
 // InventoryRowFromObservation makes version and status states explicit.

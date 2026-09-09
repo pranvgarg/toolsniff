@@ -83,8 +83,8 @@ func TestRenderReviewShowsChangesAndIssues(t *testing.T) {
 	if got := CountForView(report, ViewReview); got != want {
 		t.Fatalf("CountForView(ViewReview) = %d, want %d (changes + issues + new)", got, want)
 	}
-	if got := len(RowsForReport(report, ViewReview)); got != want {
-		t.Fatalf("RowsForReport(ViewReview) returned %d rows, want %d", got, want)
+	if got := len(RowsForReport(report, ViewReview, false)); got != want {
+		t.Fatalf("RowsForReport(ViewReview, false) returned %d rows, want %d", got, want)
 	}
 }
 
@@ -109,7 +109,7 @@ func TestRenderReviewSectionsDoNotOverlap(t *testing.T) {
 	if len(seen) != len(rowsForEvents(fullChangeReport(), ViewChanges)) {
 		t.Errorf("reviewSections claims %d statuses, want one per change category", len(seen))
 	}
-	if got, want := len(RowsForReport(report, ViewReview)), len(report.Changes.Events()); got != want {
+	if got, want := len(RowsForReport(report, ViewReview, false)), len(report.Changes.Events()); got != want {
 		t.Fatalf("review rows = %d, want %d (one per event)", got, want)
 	}
 }
@@ -126,7 +126,7 @@ func TestRenderReviewShowsNewSinceBaseline(t *testing.T) {
 	}
 	// The arrival is under New, not under Changes: the added row is the last of
 	// the four, because New is the pane's trailing section.
-	rows := RowsForReport(report, ViewReview)
+	rows := RowsForReport(report, ViewReview, false)
 	last := rows[len(rows)-1]
 	if last.Status != string(StatusAdded) || last.Name != "ripgrep" {
 		t.Errorf("expected the added entry last, got %q (%s)", last.Name, last.Status)

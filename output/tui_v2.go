@@ -315,6 +315,15 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.report.toggleMarkAll()
 				m.setReportStatus(markStatus(len(m.report.selectedSet)))
 				return m, nil
+			case key.Matches(keyMsg, m.keys.SortBySize):
+				m.report.state.SortBySize = !m.report.state.SortBySize
+				if m.report.state.SortBySize {
+					// Populate sizes once, when the sort is toggled on, not on every repaint
+					populateRowSizes(m.report.rows)
+				}
+				// Re-sort using the view's sort function with the new SortBySize state
+				m.report.rows = sortRowsForViewWithSize(m.report.rows, m.report.state.View, m.report.state.SortBySize)
+				return m, nil
 			}
 		}
 	}
@@ -472,6 +481,22 @@ func (m *tuiModel) syncReportShell() {
 	}
 	m.activeTab = reportTabIndex(m.report.uiMode, m.report.state.View)
 	m.statusMsg = m.report.status
+}
+
+// populateRowSizes measures every row's location once, up front, rather
+// than lazily during the sort comparator -- sort.SliceStable calls its less
+// function O(n log n) times, and DirectorySize is a filesystem walk; paying
+// that cost once per toggle instead of once per comparison keeps a sort
+// toggle on a large PATH inventory from stalling the UI.
+func populateRowSizes(rows []InventoryRow) {
+	for i := range rows {
+		if rows[i].Path == "" {
+			continue
+		}
+		if size, err := DirectorySize(rows[i].Path); err == nil {
+			rows[i].SizeBytes = size
+		}
+	}
 }
 
 // reportContentLines renders the report content pane as exactly height lines of

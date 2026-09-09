@@ -2,6 +2,8 @@ package output
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -805,6 +807,32 @@ func TestSidebarShowsFocusMarkerOnlyWhenFocused(t *testing.T) {
 	if lipgloss.Width(focused[active]) != lipgloss.Width(unfocused[active]) {
 		t.Errorf("focus changed the sidebar's width: %d focused, %d unfocused",
 			lipgloss.Width(focused[active]), lipgloss.Width(unfocused[active]))
+	}
+}
+
+func TestSortBySizeKeyReordersRowsLargestFirst(t *testing.T) {
+	root := t.TempDir()
+	smallPath := filepath.Join(root, "small")
+	largePath := filepath.Join(root, "large")
+	if err := os.WriteFile(smallPath, make([]byte, 10), 0o755); err != nil {
+		t.Fatalf("write small: %v", err)
+	}
+	if err := os.WriteFile(largePath, make([]byte, 10_000), 0o755); err != nil {
+		t.Fatalf("write large: %v", err)
+	}
+	small := observationWithPath("small-tool", model.RoleInstalled, model.KindExecutable,
+		model.VersionInfo{State: model.VersionUnknown, Confidence: model.ConfidenceLow}, smallPath)
+	large := observationWithPath("large-tool", model.RoleInstalled, model.KindExecutable,
+		model.VersionInfo{State: model.VersionUnknown, Confidence: model.ConfidenceLow}, largePath)
+
+	m := intentShell(t, small, large)
+	updated, _ := m.Update(testKey("z"))
+	shell := updated.(tuiModel)
+	if !shell.report.state.SortBySize {
+		t.Fatal("z did not toggle SortBySize")
+	}
+	if len(shell.report.rows) < 2 || shell.report.rows[0].ObservationID != large.ID {
+		t.Fatalf("largest row was not first after sort-by-size: %+v", shell.report.rows)
 	}
 }
 

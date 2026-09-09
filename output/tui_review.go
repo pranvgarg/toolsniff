@@ -33,7 +33,7 @@ package output
 func renderReview(report ObservationReport, selected int, styles ThemeStyles, width, height int) []string {
 	// No marks, for the reason renderManage passes none: a report carries no
 	// multi-select state.
-	return renderReviewRows(RowsForReport(report, ViewReview), selected, nil, width, height, styles)
+	return renderReviewRows(RowsForReport(report, ViewReview, false), selected, nil, width, height, styles)
 }
 
 // renderReviewRows renders an already-narrowed Review row set. The TUI shell

@@ -55,6 +55,11 @@ type FilterState struct {
 	VersionState map[model.VersionState]bool
 	Statuses     map[Status]bool
 	View         ViewCategory
+	// SortBySize overrides the view's normal grouping with a flat, largest-
+	// first order. It is a display preference, not a filter constraint, so it
+	// lives beside the other FilterState flags rather than as a `view:` facet
+	// -- the rows shown do not change, only their order.
+	SortBySize bool
 }
 
 // NewFilterState returns a normalized, empty state.
@@ -159,9 +164,9 @@ func FilterReport(report ObservationReport, state FilterState) []InventoryRow {
 	state = state.normalized()
 	if !eventDrivenView(state.View) {
 		rows := FilterRows(InventoryRows(FilterObservations(observationsForView(report, state.View), state)), state)
-		return sortRowsForView(rows, state.View)
+		return sortRowsForViewWithSize(rows, state.View, state.SortBySize)
 	}
-	return FilterRows(RowsForReport(report, state.View), state)
+	return FilterRows(RowsForReport(report, state.View, state.SortBySize), state)
 }
 
 // eventDrivenView reports whether a view's rows are built from typed change
@@ -229,12 +234,20 @@ func CountForView(report ObservationReport, view ViewCategory) int {
 	}
 }
 
-// sortRowsForView puts a view's rows in the order its pane draws them. Any
-// pane that renders sub-headings is only coherent if each block's rows are
+// sortRowsForViewWithSize puts a view's rows in the order its pane draws them,
+// optionally overriding the view's normal order with a largest-first size sort.
+// Any pane that renders sub-headings is only coherent if each block's rows are
 // contiguous, and sorting here rather than in the renderer keeps the flat
 // selection index and the rendered blocks describing the same order. A view
 // with no sub-headings keeps the report's own order.
-func sortRowsForView(rows []InventoryRow, view ViewCategory) []InventoryRow {
+func sortRowsForViewWithSize(rows []InventoryRow, view ViewCategory, bySize bool) []InventoryRow {
+	if bySize {
+		sorted := append([]InventoryRow(nil), rows...)
+		sort.SliceStable(sorted, func(i, j int) bool {
+			return sorted[i].SizeBytes > sorted[j].SizeBytes
+		})
+		return sorted
+	}
 	switch {
 	case groupedView(view):
 		return sortRowsByGroup(rows)
@@ -245,6 +258,12 @@ func sortRowsForView(rows []InventoryRow, view ViewCategory) []InventoryRow {
 	default:
 		return rows
 	}
+}
+
+// sortRowsForView is the thin wrapper around sortRowsForViewWithSize that reads
+// FilterState. Kept for backwards compatibility with existing call sites.
+func sortRowsForView(rows []InventoryRow, view ViewCategory) []InventoryRow {
+	return sortRowsForViewWithSize(rows, view, false)
 }
 
 // sortRowsByGroup orders rows by manager group, then by name inside a group.

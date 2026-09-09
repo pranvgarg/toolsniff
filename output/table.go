@@ -133,7 +133,7 @@ func RenderDiff(diff registry.Diff) string {
 // RenderObservationTable renders the v2 report with separate version, status,
 // and source columns. RenderTable remains available to direct legacy callers.
 func RenderObservationTable(report ObservationReport) string {
-	rows := RowsForReport(report, ViewAll)
+	rows := RowsForReport(report, ViewAll, false)
 	var b strings.Builder
 	fmt.Fprintln(&b, "NAME                           VERSION        STATUS       SOURCE")
 	fmt.Fprintln(&b, "---------------------------------------------------------------------")

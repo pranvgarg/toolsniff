@@ -68,3 +68,26 @@ func TestFilterDrawerAppliesAndClearsDraft(t *testing.T) {
 		t.Fatalf("drawer did not clear: %+v", drawer.State)
 	}
 }
+
+func TestSortRowsForViewSortsBySizeDescendingWhenRequested(t *testing.T) {
+	rows := []InventoryRow{
+		{ObservationID: "small", SizeBytes: 100},
+		{ObservationID: "large", SizeBytes: 10_000},
+		{ObservationID: "medium", SizeBytes: 1_000},
+	}
+	sorted := sortRowsForViewWithSize(rows, ViewManage, true)
+	want := []string{"large", "medium", "small"}
+	for i, id := range want {
+		if sorted[i].ObservationID != id {
+			t.Fatalf("sorted[%d] = %q, want %q (full order: %v)", i, sorted[i].ObservationID, id, sorted)
+		}
+	}
+}
+
+func TestSortRowsForViewIgnoresSizeWhenNotRequested(t *testing.T) {
+	rows := []InventoryRow{{ObservationID: "a", SizeBytes: 1}, {ObservationID: "b", SizeBytes: 100}}
+	sorted := sortRowsForViewWithSize(rows, ViewApplications, false)
+	if sorted[0].ObservationID != "a" || sorted[1].ObservationID != "b" {
+		t.Fatalf("sort-by-size=false should preserve input order for a non-grouped view, got %v", sorted)
+	}
+}

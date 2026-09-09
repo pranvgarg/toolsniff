@@ -139,6 +139,9 @@ type keyMap struct {
 	Mark    key.Binding
 	MarkAll key.Binding
 
+	// SortBySize toggles largest-first ordering of rows in the open pane.
+	SortBySize key.Binding
+
 	// reportTabs is the tab set the "?" digit list describes. FullHelp is a
 	// method on keyMap with no model to ask, so newObservationTUIModel hands
 	// the mode's resolved tabs here; nil (the old per-source RunTUI path)
@@ -234,6 +237,10 @@ var defaultKeyMap = keyMap{
 	MarkAll: key.NewBinding(
 		key.WithKeys("ctrl+a"),
 		key.WithHelp("ctrl+a", "mark every row here"),
+	),
+	SortBySize: key.NewBinding(
+		key.WithKeys("z"),
+		key.WithHelp("z", "sort by size"),
 	),
 }
 
