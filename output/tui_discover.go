@@ -8,7 +8,7 @@ import (
 	"github.com/pranvgarg/toolsniff/model"
 )
 
-// The Discover view (ui.mode "v3") is Manage's complement: everything on this
+// The Discover view (ui.mode "intent") is Manage's complement: everything on this
 // machine that no package manager put here. That is two things -- programs the
 // user placed on their PATH themselves, and the npx cache -- and they are one
 // list because they answer one question: what is running here that nothing is

@@ -1,12 +1,12 @@
 package output
 
-// The Review view (ui.mode "v3") answers one question: what on this machine
+// The Review view (ui.mode "intent") answers one question: what on this machine
 // needs a decision. Its material is not the inventory but the typed change
 // events -- what moved since the last saved baseline, and what is wrong now --
 // so it is the one intent view whose rows are built from events rather than
 // from observations.
 //
-// The v2 navigation split that material across two tabs, Changes and Issues,
+// The legacy navigation split that material across two tabs, Changes and Issues,
 // which is a split the events themselves do not honour: Broken and Shadowed
 // are two of the seven change categories, so the two tabs overlapped and a
 // broken tool appeared under both. Review partitions the seven categories

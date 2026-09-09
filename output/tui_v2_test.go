@@ -83,14 +83,14 @@ func TestObservationTUILandsOnKindFirstOverview(t *testing.T) {
 		"warning: scanner: warning",
 	} {
 		if !strings.Contains(view.Content, want) {
-			t.Errorf("v2 overview view missing %q: %s", want, view.Content)
+			t.Errorf("legacy overview view missing %q: %s", want, view.Content)
 		}
 	}
 	if strings.Contains(view.Content, "available") {
 		t.Errorf("the overview showed the bare word \"available\": %s", view.Content)
 	}
 	if !view.AltScreen {
-		t.Fatal("v2 shell did not enable the alternate screen")
+		t.Fatal("legacy shell did not enable the alternate screen")
 	}
 }
 
@@ -164,15 +164,15 @@ func TestPathExecutableRowsNeverSayJustAvailable(t *testing.T) {
 
 func TestReportTabsAreKindFirstAndKeepEveryStatusLensReachable(t *testing.T) {
 	want := []string{"overview", "cli-tools", "packages", "applications", "path-executables", "npx-history", "changes", "issues"}
-	tabs := reportTabsForMode("v2")
+	tabs := reportTabsForMode("legacy")
 	if len(tabs) != len(want) {
-		t.Fatalf("reportTabsForMode(\"v2\") = %v, want %v", tabs, want)
+		t.Fatalf("reportTabsForMode(\"legacy\") = %v, want %v", tabs, want)
 	}
 	for index, tab := range want {
 		if tabs[index] != tab {
-			t.Fatalf("reportTabsForMode(\"v2\")[%d] = %q, want %q", index, tabs[index], tab)
+			t.Fatalf("reportTabsForMode(\"legacy\")[%d] = %q, want %q", index, tabs[index], tab)
 		}
-		if reportViewForTab("v2", index) != ViewCategory(tab) || reportTabIndex("v2", ViewCategory(tab)) != index {
+		if reportViewForTab("legacy", index) != ViewCategory(tab) || reportTabIndex("legacy", ViewCategory(tab)) != index {
 			t.Errorf("tab %q does not round-trip through index %d", tab, index)
 		}
 	}
@@ -200,17 +200,17 @@ func TestReportTabsAreKindFirstAndKeepEveryStatusLensReachable(t *testing.T) {
 }
 
 func TestReportTabsSwitchOnUIMode(t *testing.T) {
-	v2 := reportTabsForMode("v2")
-	v3 := reportTabsForMode("v3")
-	if len(v2) != 8 {
-		t.Fatalf("v2 tabs = %d, want 8", len(v2))
+	legacy := reportTabsForMode("legacy")
+	intent := reportTabsForMode("intent")
+	if len(legacy) != 8 {
+		t.Fatalf("legacy tabs = %d, want 8", len(legacy))
 	}
-	if len(v3) != 4 || v3[0] != "manage" || v3[1] != "discover" || v3[2] != "review" || v3[3] != "health" {
-		t.Fatalf("v3 tabs = %v, want [manage discover review health]", v3)
+	if len(intent) != 4 || intent[0] != "manage" || intent[1] != "discover" || intent[2] != "review" || intent[3] != "health" {
+		t.Fatalf("intent tabs = %v, want [manage discover review health]", intent)
 	}
 }
 
-func TestObservationTUIKeepsV2InteractionsInsideShell(t *testing.T) {
+func TestObservationTUIKeepsLegacyInteractionsInsideShell(t *testing.T) {
 	tool := observation("npm-tool", model.RoleInstalled, model.KindPackage, model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
 	m := newObservationTUIModel(NewObservationReport([]model.Observation{tool}, nil, nil, emptyObservationDiff(), nil), TUIOptions{})
 	m.splashPhase = splashDone
@@ -221,17 +221,17 @@ func TestObservationTUIKeepsV2InteractionsInsideShell(t *testing.T) {
 	m.Update(testKey("npm"))
 	m.Update(testKeyCode(tea.KeyEnter))
 	if m.report.filtering || m.report.state.Text != "npm" {
-		t.Fatalf("v2 filter state was not retained: filtering=%v state=%+v", m.report.filtering, m.report.state)
+		t.Fatalf("legacy filter state was not retained: filtering=%v state=%+v", m.report.filtering, m.report.state)
 	}
 	m.Update(testKey("esc"))
 	if m.report.filtering {
-		t.Fatal("escape did not leave v2 filtering")
+		t.Fatal("escape did not leave legacy filtering")
 	}
 	// m.report is a pointer into the shell, so the report-side state these
 	// assertions read is updated in place by Update.
 	m.Update(testKeyCode(tea.KeyEnter))
 	if m.report.detail == nil {
-		t.Fatal("enter did not open v2 detail view")
+		t.Fatal("enter did not open legacy detail view")
 	}
 	// The detail pane has to carry the per-kind actions, not just metadata:
 	// this is the difference between "here is what we found" and "here is what
@@ -239,7 +239,7 @@ func TestObservationTUIKeepsV2InteractionsInsideShell(t *testing.T) {
 	detailView := m.View().Content
 	for _, want := range []string{"npm global package", "ACTIONS", "npm update -g npm-tool", "npm uninstall -g npm-tool"} {
 		if !strings.Contains(detailView, want) {
-			t.Errorf("v2 detail pane missing %q: %s", want, detailView)
+			t.Errorf("legacy detail pane missing %q: %s", want, detailView)
 		}
 	}
 
@@ -251,7 +251,7 @@ func TestObservationTUIKeepsV2InteractionsInsideShell(t *testing.T) {
 
 	m.Update(testKey("esc"))
 	if m.report.detail != nil {
-		t.Fatal("escape did not close v2 detail view")
+		t.Fatal("escape did not close legacy detail view")
 	}
 
 	_, quit := m.Update(testKey("q"))
@@ -275,13 +275,13 @@ func captureClipboard(t *testing.T) func() string {
 	return func() string { return copied }
 }
 
-// v3Shell builds a v3 shell over the given observations, sized and past the
-// splash so Update behaves as it does in a running program.
-func v3Shell(t *testing.T, installed ...model.Observation) tuiModel {
+// intentShell builds an intent-mode shell over the given observations, sized
+// and past the splash so Update behaves as it does in a running program.
+func intentShell(t *testing.T, installed ...model.Observation) tuiModel {
 	t.Helper()
 	m := newObservationTUIModel(
 		NewObservationReport(installed, nil, nil, emptyObservationDiff(), nil),
-		TUIOptions{UIMode: uiModeV3},
+		TUIOptions{UIMode: uiModeIntent},
 	)
 	m.splashPhase = splashDone
 	m.width, m.height = 100, 30
@@ -297,8 +297,8 @@ func brewObservation(name string) model.Observation {
 	return observation
 }
 
-func TestV3DigitKeysJumpToTabs(t *testing.T) {
-	m := v3Shell(t, observation("npm-tool", model.RoleInstalled, model.KindPackage,
+func TestIntentDigitKeysJumpToTabs(t *testing.T) {
+	m := intentShell(t, observation("npm-tool", model.RoleInstalled, model.KindPackage,
 		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh}))
 
 	for digit, want := range map[string]ViewCategory{
@@ -307,24 +307,24 @@ func TestV3DigitKeysJumpToTabs(t *testing.T) {
 		updated, _ := m.Update(testKey(digit))
 		shell := updated.(tuiModel)
 		if shell.report.state.View != want {
-			t.Errorf("v3 %q opened %q, want %q", digit, shell.report.state.View, want)
+			t.Errorf("intent %q opened %q, want %q", digit, shell.report.state.View, want)
 		}
-		if got := shell.activeTab; got != reportTabIndex(uiModeV3, want) {
-			t.Errorf("v3 %q left the tab highlight on %d", digit, got)
+		if got := shell.activeTab; got != reportTabIndex(uiModeIntent, want) {
+			t.Errorf("intent %q left the tab highlight on %d", digit, got)
 		}
 	}
 
-	// v3 has four tabs, so the digits past them are inert rather than wrapping
-	// onto a v2 view that this mode does not show.
+	// intent has four tabs, so the digits past them are inert rather than
+	// wrapping onto a legacy view that this mode does not show.
 	m.Update(testKey("1"))
 	updated, _ := m.Update(testKey("5"))
 	if view := updated.(tuiModel).report.state.View; view != ViewManage {
-		t.Errorf("v3 \"5\" moved off Manage to %q", view)
+		t.Errorf("intent \"5\" moved off Manage to %q", view)
 	}
 }
 
-func TestV3JumpManageKeyReturnsToManage(t *testing.T) {
-	m := v3Shell(t, observation("npm-tool", model.RoleInstalled, model.KindPackage,
+func TestIntentJumpManageKeyReturnsToManage(t *testing.T) {
+	m := intentShell(t, observation("npm-tool", model.RoleInstalled, model.KindPackage,
 		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh}))
 
 	m.Update(testKey("4"))
@@ -341,7 +341,7 @@ func TestUpdateCopyUsesPrimaryActionCommand(t *testing.T) {
 	clipboard := captureClipboard(t)
 	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
 		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
-	m := v3Shell(t, npm)
+	m := intentShell(t, npm)
 
 	observation, ok := m.report.selectedObservation()
 	if !ok {
@@ -366,7 +366,7 @@ func TestRemoveCopyUsesPrimaryRemoveCommand(t *testing.T) {
 	clipboard := captureClipboard(t)
 	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
 		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
-	m := v3Shell(t, npm)
+	m := intentShell(t, npm)
 
 	observation, _ := m.report.selectedObservation()
 	argv, ok := PrimaryRemoveCommand(observation)
@@ -395,7 +395,7 @@ func TestRemoveCopyIsInertWithoutAnUninstall(t *testing.T) {
 		"/Applications/Xcode.app")
 	app.Origin = model.Origin{Provider: "applications"}
 	app.ID = model.ObservationIdentity(app)
-	m := v3Shell(t, app)
+	m := intentShell(t, app)
 
 	m.Update(testKey("x"))
 	if got := clipboard(); got != "" {
@@ -418,7 +418,7 @@ func TestUpdateCopyAllYanksEveryUpdatableRow(t *testing.T) {
 	pipx.Origin = model.Origin{Provider: "pipx", Package: "black"}
 	pipx.ID = model.ObservationIdentity(pipx)
 
-	m := v3Shell(t, npm, brew, pipx)
+	m := intentShell(t, npm, brew, pipx)
 	m.Update(testKey("U"))
 
 	lines := strings.Split(clipboard(), "\n")
@@ -456,7 +456,7 @@ func markedShell(t *testing.T) tuiModel {
 		model.VersionInfo{Value: "24.1.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
 	pipx.Origin = model.Origin{Provider: "pipx", Package: "black"}
 	pipx.ID = model.ObservationIdentity(pipx)
-	return v3Shell(t, npm, brewObservation("wget"), pipx)
+	return intentShell(t, npm, brewObservation("wget"), pipx)
 }
 
 func TestMultiSelectToggle(t *testing.T) {
@@ -624,7 +624,7 @@ func lineContaining(t *testing.T, lines []string, needle string) string {
 	return ""
 }
 
-func TestV2DigitKeysUnchanged(t *testing.T) {
+func TestLegacyDigitKeysUnchanged(t *testing.T) {
 	clipboard := captureClipboard(t)
 	npm := observation("npm-tool", model.RoleInstalled, model.KindPackage,
 		model.VersionInfo{Value: "1.0.0", State: model.VersionKnown, Confidence: model.ConfidenceHigh})
@@ -633,39 +633,39 @@ func TestV2DigitKeysUnchanged(t *testing.T) {
 	m.width, m.height = 100, 30
 	m.resizeContent()
 
-	// The v2 digit ladder is untouched: 1 is still the overview dashboard, not
-	// the v3 Manage pane, and the tabs past v3's four still work.
+	// The legacy digit ladder is untouched: 1 is still the overview dashboard,
+	// not the intent-mode Manage pane, and the tabs past intent's four still work.
 	for digit, want := range map[string]ViewCategory{
 		"1": ViewOverview, "3": ViewPackages, "5": ViewPathExecutables, "8": ViewIssues,
 	} {
 		updated, _ := m.Update(testKey(digit))
 		if view := updated.(tuiModel).report.state.View; view != want {
-			t.Errorf("v2 %q opened %q, want %q", digit, view, want)
+			t.Errorf("legacy %q opened %q, want %q", digit, view, want)
 		}
 	}
 
-	// m has no intent-first tab to jump to in v2, so it must leave the view alone.
+	// m has no intent-first tab to jump to in legacy, so it must leave the view alone.
 	m.Update(testKey("3"))
 	updated, _ := m.Update(testKey("m"))
 	if view := updated.(tuiModel).report.state.View; view != ViewPackages {
-		t.Fatalf("v2 \"m\" moved off Packages to %q", view)
+		t.Fatalf("legacy \"m\" moved off Packages to %q", view)
 	}
 
-	// The action keys are not v3-only: they act on the selected row in v2 too.
+	// The action keys are not intent-only: they act on the selected row in legacy too.
 	m.Update(testKey("u"))
 	argv, _ := PrimaryActionCommand(npm)
 	if got, want := clipboard(), strings.Join(argv, " "); got != want {
-		t.Fatalf("v2 u copied %q, want %q", got, want)
+		t.Fatalf("legacy u copied %q, want %q", got, want)
 	}
 }
 
-// navShell is a two-row v3 shell with the focus layer set explicitly, so every
+// navShell is a two-row intent-mode shell with the focus layer set explicitly, so every
 // navigation test names the layer it is about rather than leaning on the
 // default. Two rows is the minimum that can tell "the cursor moved" from "the
 // cursor could not move".
 func navShell(t *testing.T, layer focusLayer) tuiModel {
 	t.Helper()
-	m := v3Shell(t, brewObservation("ripgrep"), brewObservation("fd"))
+	m := intentShell(t, brewObservation("ripgrep"), brewObservation("fd"))
 	m.focus = layer
 	return m
 }
@@ -679,7 +679,7 @@ func TestTabKeysMoveSidebarWhenSidebarFocused(t *testing.T) {
 	if shell.activeTab != before+1 {
 		t.Fatalf("→ left the sidebar on tab %d, want %d", shell.activeTab, before+1)
 	}
-	if want := reportViewForTab(uiModeV3, before+1); shell.report.state.View != want {
+	if want := reportViewForTab(uiModeIntent, before+1); shell.report.state.View != want {
 		t.Errorf("→ opened %q, want %q", shell.report.state.View, want)
 	}
 	// Moving the selection is not entering it: the next arrow has to keep
@@ -723,7 +723,7 @@ func TestEnterOnSidebarOpensPane(t *testing.T) {
 	if shell.focus != focusPane {
 		t.Fatalf("enter on the sidebar left focus on the sidebar")
 	}
-	if want := reportViewForTab(uiModeV3, shell.activeTab); shell.report.state.View != want {
+	if want := reportViewForTab(uiModeIntent, shell.activeTab); shell.report.state.View != want {
 		t.Errorf("enter opened %q, want the active tab's view %q", shell.report.state.View, want)
 	}
 	// One level per enter: the pane is open, but no row's detail is.
@@ -787,7 +787,7 @@ func TestEscFromSidebarNoOp(t *testing.T) {
 
 func TestSidebarShowsFocusMarkerOnlyWhenFocused(t *testing.T) {
 	styles := overviewStyles()
-	tabs := reportTabsForMode(uiModeV2)
+	tabs := reportTabsForMode(uiModeLegacy)
 	active := 1
 
 	focused := renderSidebarLines(tabs, active, true, nil, len(tabs), styles)

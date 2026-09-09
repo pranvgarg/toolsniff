@@ -112,7 +112,7 @@ type cliOptions struct {
 	version           bool
 	configPath        string
 	legacyTabs        bool
-	v3                bool
+	intentTabs        bool
 }
 
 func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
@@ -137,8 +137,8 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 	flags.BoolVar(&options.yes, "yes", false, "confirm --update without prompting")
 	flags.BoolVar(&options.version, "version", false, "print the toolsniff version and exit")
 	flags.StringVar(&options.configPath, "config", config.DefaultConfigPath(), "path to the TOML configuration file")
-	flags.BoolVar(&options.legacyTabs, "legacy-tabs", false, "use the original eight-tab layout instead of the intent-based v3 tabs")
-	flags.BoolVar(&options.v3, "v3", false, "use the intent-based four-tab layout (Manage/Discover/Review/Health) instead of the eight-tab layout")
+	flags.BoolVar(&options.legacyTabs, "legacy-tabs", false, "use the original eight-tab layout instead of the intent-based tabs")
+	flags.BoolVar(&options.intentTabs, "intent-tabs", false, "use the intent-based four-tab layout (Manage/Discover/Review/Health) instead of the eight-tab layout")
 
 	if err := flags.Parse(args); err != nil {
 		return cliOptions{}, err
@@ -411,7 +411,7 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 			Version:      appVersion,
 			Theme:        settings.Theme,
 			ConfigPath:   settings.ConfigPath,
-			UIMode:       resolveUIMode(settings, options.legacyTabs, options.v3),
+			UIMode:       resolveUIMode(settings, options.legacyTabs, options.intentTabs),
 		}); err != nil {
 			fmt.Fprintln(errorOutput, err)
 			return 1
@@ -421,22 +421,23 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 }
 
 // resolveUIMode picks the TUI tab layout. Configuration selects it normally;
-// the two flags are the no-config-edit overrides for the opt-in v3 rollout and
-// both win over the config file. --legacy-tabs is the rollback switch, so a
-// user who hits trouble with the new tabs can get the eight-tab layout back
-// without editing (or finding) their TOML; --v3 is its inverse, the try-it
-// switch for the intent tabs while v2 remains the shipped default.
+// the two flags are the no-config-edit overrides for the opt-in intent-tabs
+// rollout and both win over the config file. --legacy-tabs is the rollback
+// switch, so a user who hits trouble with the new tabs can get the eight-tab
+// layout back without editing (or finding) their TOML; --intent-tabs is its
+// inverse, the try-it switch for the intent tabs while legacy remains the
+// shipped default.
 //
 // --legacy-tabs is checked first, so it wins if both flags are passed: the
 // rollback switch should never be the one that loses.
-func resolveUIMode(settings config.Settings, legacyTabs, v3 bool) string {
+func resolveUIMode(settings config.Settings, legacyTabs, intentTabs bool) string {
 	if legacyTabs {
 		return output.UIModeLegacy
 	}
-	if v3 {
-		// The output package exports no v3 constant; this literal is the value
-		// reportTabsForMode compares its unexported uiModeV3 against.
-		return "v3"
+	if intentTabs {
+		// The output package exports no intent-mode constant; this literal is
+		// the value reportTabsForMode compares its unexported uiModeIntent against.
+		return "intent"
 	}
 	return settings.UI.Mode
 }

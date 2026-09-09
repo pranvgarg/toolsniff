@@ -11,10 +11,10 @@ import (
 	"github.com/pranvgarg/toolsniff/registry"
 )
 
-// reportTUIModel contains only v2 report interaction state. It is hosted by
+// reportTUIModel contains only report interaction state. It is hosted by
 // tuiModel for the application entry point so the established shell remains
 // the owner of lifecycle, layout, and chrome. uiMode carries the resolved
-// config ui.mode ("v2"/"v3"); it lives here because the shell re-reads it on
+// config ui.mode ("legacy"/"intent"); it lives here because the shell re-reads it on
 // every tab move and every sync.
 type reportTUIModel struct {
 	report      ObservationReport
@@ -65,7 +65,7 @@ func NewReportTUIModel(report ObservationReport) tea.Model {
 
 func newReportTUIModel(report ObservationReport, mode string) reportTUIModel {
 	state := NewFilterState()
-	// The landing view is the mode's first tab, which in v2 is the overview
+	// The landing view is the mode's first tab, which in legacy is the overview
 	// dashboard rather than a flat list: the first question is "what's on this
 	// machine", not "here are 200 rows".
 	state.View = ViewCategory(reportTabsForMode(mode)[0])
@@ -82,21 +82,21 @@ func newReportTUIModel(report ObservationReport, mode string) reportTUIModel {
 
 // UI mode ids, matching config's ui.mode values.
 const (
-	uiModeV2 = "v2"
-	uiModeV3 = "v3"
+	uiModeLegacy = "legacy"
+	uiModeIntent = "intent"
 )
 
 // UIModeLegacy is the TUIOptions.UIMode value for the original eight-tab
 // layout. It is exported so callers that override the configured ui.mode --
 // the --legacy-tabs rollback flag -- name the same value reportTabsForMode
 // reads instead of repeating the string literal.
-const UIModeLegacy = uiModeV2
+const UIModeLegacy = uiModeLegacy
 
-// v2ReportTabs is the kind-first navigation, ordered most useful first. It leads
-// with *what each thing is* rather than with what state a scanner filed it
-// under; the status lenses (all/installed/available/history) live on in the
+// legacyReportTabs is the kind-first navigation, ordered most useful first. It
+// leads with *what each thing is* rather than with what state a scanner filed
+// it under; the status lenses (all/installed/available/history) live on in the
 // filter drawer as `view:` values. See output/kinds.go for each tab's meaning.
-var v2ReportTabs = []string{
+var legacyReportTabs = []string{
 	string(ViewOverview),
 	string(ViewCLI),
 	string(ViewPackages),
@@ -107,9 +107,9 @@ var v2ReportTabs = []string{
 	string(ViewIssues),
 }
 
-// v3ReportTabs is the intent-first navigation: four tabs named for what the user
-// came to do, not for what kind of thing a row is.
-var v3ReportTabs = []string{
+// intentReportTabs is the intent-first navigation: four tabs named for what the
+// user came to do, not for what kind of thing a row is.
+var intentReportTabs = []string{
 	string(ViewManage),
 	string(ViewDiscover),
 	string(ViewReview),
@@ -118,16 +118,16 @@ var v3ReportTabs = []string{
 
 // reportTabsForMode is the tab set for a config ui.mode value. The returned
 // slice is shared and must not be mutated -- callers that keep it (the shell's
-// own tabs) copy it first. An unset or unrecognised mode is v2: navigation is
-// chrome, and a typo in the config file should not leave the user without it.
+// own tabs) copy it first. An unset or unrecognised mode is legacy: navigation
+// is chrome, and a typo in the config file should not leave the user without it.
 func reportTabsForMode(mode string) []string {
-	if mode == uiModeV3 {
-		return v3ReportTabs
+	if mode == uiModeIntent {
+		return intentReportTabs
 	}
-	return v2ReportTabs
+	return legacyReportTabs
 }
 
-// newObservationTUIModel puts the v2 state inside the established TUI shell.
+// newObservationTUIModel puts the report state inside the established TUI shell.
 // Keeping construction here makes the additive report model usable on its own
 // in tests and by adapters while the application gets the full TUI chrome.
 func newObservationTUIModel(report ObservationReport, options TUIOptions) tuiModel {
@@ -145,7 +145,7 @@ func newObservationTUIModel(report ObservationReport, options TUIOptions) tuiMod
 	return shell
 }
 
-// RunObservationTUI launches the v2 report TUI without changing RunTUI.
+// RunObservationTUI launches the report TUI without changing RunTUI.
 func RunObservationTUI(report ObservationReport, options TUIOptions) error {
 	model := newObservationTUIModel(report, options)
 	program := tea.NewProgram(&model)
@@ -169,7 +169,7 @@ func reportSidebarCounts(report ObservationReport, mode string) map[string][]mod
 // reached through the filter drawer has no tab of its own, so it keeps the
 // highlight on the tab that holds the same rows rather than snapping back to
 // the first one. The lookup is a search rather than a recursive call because a
-// fallback view need not itself be a tab: in v3, "on your PATH" and "npx
+// fallback view need not itself be a tab: in intent mode, "on your PATH" and "npx
 // history" are both folded into Discover.
 func reportTabIndex(mode string, view ViewCategory) int {
 	tabs := reportTabsForMode(mode)
@@ -188,7 +188,7 @@ func reportTabIndex(mode string, view ViewCategory) int {
 	default:
 		return 0
 	}
-	if mode == uiModeV3 {
+	if mode == uiModeIntent {
 		fallback = ViewDiscover
 	}
 	for index, tab := range tabs {
@@ -212,7 +212,7 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 		keyName := keyMsg.String()
 		m.statusMsg = ""
 
-		// Quit remains a shell concern so it works from every v2 overlay.
+		// Quit remains a shell concern so it works from every report overlay.
 		if keyName == "ctrl+c" || keyName == "q" {
 			return m, tea.Quit
 		}
@@ -282,7 +282,7 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resizeContent()
 				return m, nil
 			case key.Matches(keyMsg, m.keys.JumpTab):
-				// One digit ladder for both modes: v2 answers 1-8, v3 answers 1-4
+				// One digit ladder for both modes: legacy answers 1-8, intent answers 1-4
 				// (Manage/Discover/Review/Health) and ignores 5-9, because the bound
 				// is the active mode's tab count.
 				if index := int(keyName[0] - '1'); index >= 0 && index < len(reportTabsForMode(m.report.uiMode)) {
@@ -293,10 +293,10 @@ func (m tuiModel) updateReport(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case key.Matches(keyMsg, m.keys.JumpManage):
-				// Intent-first navigation only. v2's tabs are kind-first and have no
+				// Intent-first navigation only. legacy's tabs are kind-first and have no
 				// single "everything a manager installed" pane to land on, so rather
 				// than picking an arbitrary near-miss the key stays inert there.
-				if m.report.uiMode == uiModeV3 {
+				if m.report.uiMode == uiModeIntent {
 					m.openReportView(ViewManage)
 					m.focus = focusPane
 				}
@@ -474,7 +474,7 @@ func (m *tuiModel) syncReportShell() {
 	m.statusMsg = m.report.status
 }
 
-// reportContentLines renders the v2 content pane as exactly height lines of
+// reportContentLines renders the report content pane as exactly height lines of
 // exactly width cells: the detail pane, the filter drawer, the overview
 // dashboard, the change list, or a kind-first inventory pane, depending on what
 // the user has open.
@@ -541,8 +541,8 @@ func (m tuiModel) reportContentLines(width, height int) []string {
 	case m.report.state.View == ViewReview:
 		// Ahead of the change-list case: Review is event-driven like Changes and
 		// Issues, but it renders those events as grouped inventory rows rather
-		// than as the v2 category list, so the intent views can diverge from the
-		// v2 panes without disturbing them.
+		// than as the legacy category list, so the intent views can diverge from
+		// the legacy panes without disturbing them.
 		lines = append(lines, renderReviewRows(m.report.rows, m.report.selected, m.report.selectedSet, width, body, m.styles)...)
 	case m.report.state.View == ViewChanges || m.report.state.View == ViewIssues:
 		lines = append(lines, renderChangeLines(m.report.report.Changes, m.styles)...)

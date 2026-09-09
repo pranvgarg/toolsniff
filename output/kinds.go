@@ -393,7 +393,7 @@ func ViewMeaning(view ViewCategory) string {
 
 // --- the Health cards ------------------------------------------------------
 //
-// Health (ui.mode "v3") is the "is this machine healthy and up to date" pane.
+// Health (ui.mode "intent") is the "is this machine healthy and up to date" pane.
 // Three of its four cards are counts of views defined above, so they read from
 // the same vocabulary as every tab. The fourth has no view behind it yet, and
 // the wording below is what keeps that visible rather than papered over.
@@ -442,7 +442,7 @@ func ViewCaption(view ViewCategory, count int) string {
 
 // --- the Review sections ---------------------------------------------------
 //
-// Review (ui.mode "v3") consolidates everything that needs a decision. Its
+// Review (ui.mode "intent") consolidates everything that needs a decision. Its
 // material is the typed change events, which arrive in seven categories, and
 // the sections below partition those seven into the three questions a user
 // actually asks. The partition is exhaustive and disjoint: every category
@@ -466,7 +466,7 @@ type reviewSection struct {
 // reviewNewLabel and reviewNewMeaning are the one piece of wording Review adds
 // to this file. The other two blocks are the Changes and Issues views under
 // their own names, but "present now, absent from the last saved baseline" had
-// no heading of its own: in the v2 change list it is the ADDED category, which
+// no heading of its own: in the legacy change list it is the ADDED category, which
 // names the event rather than what the user is looking at. Its gloss is
 // deliberately the narrower half of ViewMeaning(ViewChanges) -- this block is
 // the new arrivals specifically, not everything that moved since the baseline.

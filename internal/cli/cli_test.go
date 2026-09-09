@@ -556,47 +556,48 @@ func (s legacyFixtureScanner) Scan() ([]model.Tool, error) {
 	return []model.Tool{s.tool}, nil
 }
 
-// The --legacy-tabs flag is the rollback switch for the opt-in v3 rollout: it
-// pins the TUI to the eight-tab layout even when the config asks for v3.
-func TestLegacyTabsFlagForcesV2(t *testing.T) {
-	settings := config.Settings{UI: config.UISettings{Mode: "v3"}}
-	if mode := resolveUIMode(settings, true, false); mode != "v2" {
-		t.Fatalf("resolveUIMode(v3, legacyTabs=true) = %q, want v2", mode)
+// The --legacy-tabs flag is the rollback switch for the opt-in intent-tabs
+// rollout: it pins the TUI to the eight-tab layout even when the config asks
+// for intent.
+func TestLegacyTabsFlagForcesLegacy(t *testing.T) {
+	settings := config.Settings{UI: config.UISettings{Mode: "intent"}}
+	if mode := resolveUIMode(settings, true, false); mode != "legacy" {
+		t.Fatalf("resolveUIMode(intent, legacyTabs=true) = %q, want legacy", mode)
 	}
-	if mode := resolveUIMode(settings, false, false); mode != "v3" {
-		t.Fatalf("resolveUIMode(v3, legacyTabs=false) = %q, want v3", mode)
+	if mode := resolveUIMode(settings, false, false); mode != "intent" {
+		t.Fatalf("resolveUIMode(intent, legacyTabs=false) = %q, want intent", mode)
 	}
 }
 
-// --v3 is the inverse of --legacy-tabs: it pins the TUI to the intent-based
-// four-tab layout even though v2 is the shipped default.
-func TestV3FlagForcesV3(t *testing.T) {
-	settings := config.Settings{UI: config.UISettings{Mode: "v2"}}
-	if mode := resolveUIMode(settings, false, true); mode != "v3" {
-		t.Fatalf("resolveUIMode(v2, v3=true) = %q, want v3", mode)
+// --intent-tabs is the inverse of --legacy-tabs: it pins the TUI to the
+// intent-based four-tab layout even though legacy is the shipped default.
+func TestIntentTabsFlagForcesIntent(t *testing.T) {
+	settings := config.Settings{UI: config.UISettings{Mode: "legacy"}}
+	if mode := resolveUIMode(settings, false, true); mode != "intent" {
+		t.Fatalf("resolveUIMode(legacy, intentTabs=true) = %q, want intent", mode)
 	}
-	if mode := resolveUIMode(settings, false, false); mode != "v2" {
-		t.Fatalf("resolveUIMode(v2, no flags) = %q, want v2", mode)
+	if mode := resolveUIMode(settings, false, false); mode != "legacy" {
+		t.Fatalf("resolveUIMode(legacy, no flags) = %q, want legacy", mode)
 	}
 }
 
 // --legacy-tabs is the rollback switch, so it wins when both flags are passed.
-func TestResolveUIModeLegacyTabsWinsOverV3(t *testing.T) {
-	for _, mode := range []string{"v2", "v3"} {
+func TestResolveUIModeLegacyTabsWinsOverIntent(t *testing.T) {
+	for _, mode := range []string{"legacy", "intent"} {
 		settings := config.Settings{UI: config.UISettings{Mode: mode}}
-		if got := resolveUIMode(settings, true, true); got != "v2" {
-			t.Fatalf("resolveUIMode(%s, legacyTabs=true, v3=true) = %q, want v2", mode, got)
+		if got := resolveUIMode(settings, true, true); got != "legacy" {
+			t.Fatalf("resolveUIMode(%s, legacyTabs=true, intentTabs=true) = %q, want legacy", mode, got)
 		}
 	}
 }
 
-func TestResolveUIModeKeepsConfiguredV2Default(t *testing.T) {
-	settings := config.Settings{UI: config.UISettings{Mode: "v2"}}
-	if mode := resolveUIMode(settings, false, false); mode != "v2" {
-		t.Fatalf("resolveUIMode(v2, legacyTabs=false) = %q, want v2", mode)
+func TestResolveUIModeKeepsConfiguredLegacyDefault(t *testing.T) {
+	settings := config.Settings{UI: config.UISettings{Mode: "legacy"}}
+	if mode := resolveUIMode(settings, false, false); mode != "legacy" {
+		t.Fatalf("resolveUIMode(legacy, legacyTabs=false) = %q, want legacy", mode)
 	}
-	if mode := resolveUIMode(settings, true, false); mode != "v2" {
-		t.Fatalf("resolveUIMode(v2, legacyTabs=true) = %q, want v2", mode)
+	if mode := resolveUIMode(settings, true, false); mode != "legacy" {
+		t.Fatalf("resolveUIMode(legacy, legacyTabs=true) = %q, want legacy", mode)
 	}
 }
 
@@ -619,22 +620,22 @@ func TestParseFlagsLegacyTabs(t *testing.T) {
 	}
 }
 
-func TestParseFlagsV3(t *testing.T) {
+func TestParseFlagsIntentTabs(t *testing.T) {
 	var errorOutput bytes.Buffer
-	options, err := parseFlags([]string{"--v3"}, &errorOutput)
+	options, err := parseFlags([]string{"--intent-tabs"}, &errorOutput)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if !options.v3 {
-		t.Fatal("--v3 did not set options.v3")
+	if !options.intentTabs {
+		t.Fatal("--intent-tabs did not set options.intentTabs")
 	}
 
 	options, err = parseFlags(nil, &errorOutput)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
-	if options.v3 {
-		t.Fatal("options.v3 set without --v3")
+	if options.intentTabs {
+		t.Fatal("options.intentTabs set without --intent-tabs")
 	}
 }
 
@@ -646,7 +647,7 @@ func TestParseFlagsHelpListsUIModeFlags(t *testing.T) {
 		t.Fatalf("parseFlags(--help) error = %v, want flag.ErrHelp", err)
 	}
 	usage := errorOutput.String()
-	for _, name := range []string{"-legacy-tabs", "-v3"} {
+	for _, name := range []string{"-legacy-tabs", "-intent-tabs"} {
 		if !strings.Contains(usage, name) {
 			t.Fatalf("--help output missing %s:\n%s", name, usage)
 		}

@@ -43,7 +43,7 @@ type BunSettings struct {
 
 // UISettings controls TUI tab layout.
 type UISettings struct {
-	Mode string `toml:"mode"` // "v2" = 8-tab kind-first, "v3" = 4-tab intent-based
+	Mode string `toml:"mode"` // "legacy" = 8-tab kind-first, "intent" = 4-tab intent-based
 }
 
 // ThemeSettings contains the selected preset and any user color overrides.
@@ -139,7 +139,7 @@ func DefaultSettings() Settings {
 		},
 		Bun:          BunSettings{Enabled: true},
 		Theme:        DefaultThemeSettings(),
-		UI:           UISettings{Mode: "v2"},
+		UI:           UISettings{Mode: "legacy"},
 		NPXDir:       defaultNPXDir(),
 		CargoBinDir:  defaultCargoBinDir(),
 		RegistryPath: defaultRegistryPath(),

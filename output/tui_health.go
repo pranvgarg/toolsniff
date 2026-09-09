@@ -1,6 +1,6 @@
 package output
 
-// The Health view (ui.mode "v3") answers "is this machine healthy and up to
+// The Health view (ui.mode "intent") answers "is this machine healthy and up to
 // date" before the user has to open anything. It is a dashboard, not a list:
 // four cards, each a title, a number, and one plain sentence saying what the
 // number is. Every card is a doorway -- Updatable and Manage are views with
@@ -22,7 +22,7 @@ package output
 //
 // It takes the same arguments renderManage and renderDiscover do. selected is
 // unused: the pane has no rows to move a cursor through, and taking it anyway
-// keeps every v3 view reachable through one signature.
+// keeps every intent view reachable through one signature.
 func renderHealth(report ObservationReport, selected int, styles ThemeStyles, width, height int) []string {
 	_ = selected
 

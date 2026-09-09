@@ -153,9 +153,9 @@ func TestRenderReviewRendersExactlyHeightLines(t *testing.T) {
 }
 
 // The renderer being right is not the same as the shell reaching it, so this
-// drives the v3 tab strip the way a user would.
+// drives the intent tab strip the way a user would.
 func TestObservationTUIReviewTabRendersChangesAndIssues(t *testing.T) {
-	m := newObservationTUIModel(reviewReport(), TUIOptions{UIMode: uiModeV3})
+	m := newObservationTUIModel(reviewReport(), TUIOptions{UIMode: uiModeIntent})
 	m.splashPhase = splashDone
 	m.width, m.height = 110, 30
 	m.resizeContent()

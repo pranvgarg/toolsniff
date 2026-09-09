@@ -243,14 +243,14 @@ the active tab as a monochrome-safe secondary cue.
   status messages, then keybinding hints in `muted`. A user's eye must be able
   to jump to a real problem without reading the hint row.
 
-### Intent-based navigation (`ui.mode = v3`)
+### Intent-based navigation (`ui.mode = intent`)
 
-`ui.mode = "v3"` (`output/tui_v2.go`, `v3ReportTabs`) replaces the eight
+`ui.mode = "intent"` (`output/tui_v2.go`, `intentReportTabs`) replaces the eight
 kind-first sidebar rows with four named for what the user came to **do**. This
 is a **re-grouping of the same observations — not new data, and not a second
 visual language.** Every tab's title and gloss comes from `ViewLabel` /
 `ViewMeaning` in `output/kinds.go`, and every count from `CountForView`, exactly
-as in v2.
+as in legacy.
 
 | Tab | Holds | Grouped by |
 |---|---|---|
@@ -265,7 +265,7 @@ view, so no observation falls between the two tabs and none is listed twice.
 change event can carry appears in exactly one block — which is why Review's
 count is simply the number of events.
 
-**No token moves for v3.** Every role is one v2 already defined:
+**No token moves for intent.** Every role is one legacy already defined:
 
 - the active tab is `ActiveTab` — the same `accent` + bold + underline — with
   the same `▎` `accent` bar at column 0 (`SelectionBar`);
@@ -279,7 +279,7 @@ count is simply the number of events.
   gloss in `muted`, exactly like every other card. Nothing is styled to mark it
   as special; the wording carries that — see "Reclaimable placeholder".
 
-v3 adds four names to the vocabulary. It adds **no color, no glyph, and no
+Intent mode adds four names to the vocabulary. It adds **no color, no glyph, and no
 second accent.**
 
 ### Spacing

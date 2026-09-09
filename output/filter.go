@@ -21,7 +21,7 @@ const (
 	ViewPathExecutables ViewCategory = "path-executables"
 	ViewNpxHistory      ViewCategory = "npx-history"
 
-	// Intent-first views (ui.mode "v3"). These replace the kind-first tabs
+	// Intent-first views (ui.mode "intent"). These replace the kind-first tabs
 	// when enabled. See output/kinds.go for their plain meaning.
 	ViewManage   ViewCategory = "manage"
 	ViewDiscover ViewCategory = "discover"

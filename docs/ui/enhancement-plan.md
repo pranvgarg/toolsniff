@@ -229,14 +229,14 @@ Post-P3, toolsniff has **8 tabs**: Overview · CLI tools · Packages · Applicat
 
 ## 9. Migration Path (Non-Breaking)
 
-1. **Phase 1**: Add new tab logic behind feature flag (`ui.mode = "v3"` in config)
-2. **Phase 2**: Default to v3; keep old tabs accessible via `--legacy-tabs`
+1. **Phase 1**: Add new tab logic behind feature flag (`ui.mode = "intent"` in config)
+2. **Phase 2**: Default to intent; keep old tabs accessible via `--legacy-tabs`
 3. **Phase 3**: Remove legacy code
 
 **Config addition**:
 ```toml
 [ui]
-mode = "v3"  # "v2" = current 8-tab, "v3" = 4-tab intent-based
+mode = "intent"  # "legacy" = current 8-tab, "intent" = 4-tab intent-based
 ```
 
 ---

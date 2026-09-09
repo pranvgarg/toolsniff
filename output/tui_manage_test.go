@@ -67,9 +67,9 @@ func TestRenderManageGroupsInstalledByManager(t *testing.T) {
 }
 
 // The renderer being right is not the same as the shell reaching it, so this
-// drives the v3 tab strip the way a user would.
+// drives the intent tab strip the way a user would.
 func TestObservationTUIManageTabRendersOneGroupedList(t *testing.T) {
-	m := newObservationTUIModel(manageReport(), TUIOptions{UIMode: uiModeV3})
+	m := newObservationTUIModel(manageReport(), TUIOptions{UIMode: uiModeIntent})
 	m.splashPhase = splashDone
 	m.width, m.height = 100, 30
 	m.resizeContent()

@@ -7,24 +7,24 @@ import (
 	"time"
 )
 
-func TestConfigUIModeDefaultsToV2(t *testing.T) {
+func TestConfigUIModeDefaultsToLegacy(t *testing.T) {
 	settings := DefaultSettings()
-	if settings.UI.Mode != "v2" {
-		t.Fatalf("default ui.mode = %q, want v2", settings.UI.Mode)
+	if settings.UI.Mode != "legacy" {
+		t.Fatalf("default ui.mode = %q, want legacy", settings.UI.Mode)
 	}
 }
 
 func TestLoadUIModeFromTOML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte("[ui]\nmode = \"v3\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("[ui]\nmode = \"intent\"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	settings, err := Load(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if settings.UI.Mode != "v3" {
-		t.Fatalf("ui.mode = %q, want v3", settings.UI.Mode)
+	if settings.UI.Mode != "intent" {
+		t.Fatalf("ui.mode = %q, want intent", settings.UI.Mode)
 	}
 }
 
@@ -37,8 +37,8 @@ func TestLoadOmittedUIModeKeepsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if settings.UI.Mode != "v2" {
-		t.Fatalf("ui.mode = %q, want v2", settings.UI.Mode)
+	if settings.UI.Mode != "legacy" {
+		t.Fatalf("ui.mode = %q, want legacy", settings.UI.Mode)
 	}
 }
 

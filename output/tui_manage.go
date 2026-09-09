@@ -1,6 +1,6 @@
 package output
 
-// The Manage view (ui.mode "v3") answers one question: what is on this machine
+// The Manage view (ui.mode "intent") answers one question: what is on this machine
 // that a package manager put here, and could therefore update or remove it. It
 // is deliberately a single list rather than three tabs -- to the person doing
 // the managing, an npm CLI tool, a Homebrew formula with no command, and a

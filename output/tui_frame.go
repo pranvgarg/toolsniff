@@ -38,7 +38,7 @@ func frameHorizontalChrome(styles ThemeStyles) int {
 		styles.ContentPane.GetHorizontalFrameSize()
 }
 
-// tabDisplayLabel is the human name for a tab id. The v2 report tab ids are
+// tabDisplayLabel is the human name for a tab id. The report tab ids are
 // slugs ("path-executables"); the sidebar shows what they mean instead, so the
 // navigation reads as English and never shows a bare "available". Anything not
 // a report view (a legacy per-source tab) is shown as-is.
@@ -75,8 +75,9 @@ func sidebarLabel(tab string, alert bool, styles ThemeStyles) string {
 }
 
 // tabAlerts marks the tabs that carry a problem the user should notice: the
-// legacy "new since last scan" tab, and the v2 "issues" tab when it is not
-// empty. An alerting tab with nothing in it is noise, so zero never alerts.
+// old per-source "new since last scan" tab, and the legacy "issues" tab when
+// it is not empty. An alerting tab with nothing in it is noise, so zero never
+// alerts.
 func tabAlerts(tab string, count int) bool {
 	if tab == newTabID {
 		return true

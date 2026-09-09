@@ -8,9 +8,9 @@ import (
 )
 
 // This file owns every inventory list rendered inside the TUI frame. Both the
-// v2 report pane and the legacy per-source pane go through it, so "installed
-// vs available vs broken" looks the same everywhere. See DESIGN.md >
-// Components > "Row -- installed/available/broken".
+// report pane (legacy and intent tab layouts alike) and the old per-source
+// pane go through it, so "installed vs available vs broken" looks the same
+// everywhere. See DESIGN.md > Components > "Row -- installed/available/broken".
 
 // Column indices in the rendered matrix. The two leading one-cell columns are
 // structural: barColumn carries the selection marker, glyphColumn carries the

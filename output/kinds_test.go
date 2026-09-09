@@ -29,7 +29,7 @@ func TestManagerPriorityOrder(t *testing.T) {
 	}
 }
 
-func TestV3ViewsHavePlainDefinitions(t *testing.T) {
+func TestIntentViewsHavePlainDefinitions(t *testing.T) {
 	for _, v := range []ViewCategory{ViewManage, ViewDiscover, ViewReview, ViewHealth} {
 		if ViewLabel(v) == "" || ViewMeaning(v) == "" {
 			t.Fatalf("view %q missing label/meaning", v)

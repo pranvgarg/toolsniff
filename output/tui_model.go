@@ -76,9 +76,10 @@ type tuiModel struct {
 	splashLines []string
 	splashTimer timer.Model
 
-	// report is set only for the v2 entry point. The surrounding model remains
-	// responsible for lifecycle, layout, chrome, and global key handling while
-	// the report model owns v2 filtering and selection state.
+	// report is set only for the report-based entry point. The surrounding
+	// model remains responsible for lifecycle, layout, chrome, and global key
+	// handling while the report model owns its own filtering and selection
+	// state.
 	report         *reportTUIModel
 	reportWarnings []string
 }
@@ -92,17 +93,18 @@ type TUIOptions struct {
 	Theme        config.ThemeSettings
 	ConfigPath   string
 
-	// UIMode is the config's ui.mode: "v2" for the eight kind-first tabs, "v3"
-	// for the four intent-first ones. Empty means v2, so every existing caller
-	// (and every test that passes TUIOptions{}) keeps the tabs it had.
+	// UIMode is the config's ui.mode: "legacy" for the eight kind-first tabs,
+	// "intent" for the four intent-first ones. Empty means legacy, so every
+	// existing caller (and every test that passes TUIOptions{}) keeps the tabs
+	// it had.
 	UIMode string
 }
 
 // keyMap defines every key binding the TUI recognizes, satisfying
 // help.KeyMap so it can be rendered directly via help.Model.View. Up/Down are
 // dispatched against only while the sidebar holds focus; inside a pane the row
-// cursor is moved by table.Model (legacy) or reportTUIModel.Update (v2/v3),
-// both of which read ↑/↓/j/k themselves.
+// cursor is moved by table.Model (the old per-source TUI) or
+// reportTUIModel.Update (legacy/intent), both of which read ↑/↓/j/k themselves.
 type keyMap struct {
 	Up      key.Binding
 	Down    key.Binding
@@ -139,7 +141,8 @@ type keyMap struct {
 
 	// reportTabs is the tab set the "?" digit list describes. FullHelp is a
 	// method on keyMap with no model to ask, so newObservationTUIModel hands
-	// the mode's resolved tabs here; nil (the legacy RunTUI path) means v2.
+	// the mode's resolved tabs here; nil (the old per-source RunTUI path)
+	// means the legacy eight-tab layout.
 	reportTabs []string
 }
 
@@ -272,10 +275,10 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // viewHelpBindings renders one binding per report tab: the digit that jumps to
 // it, described by its plain-English label. An empty tab set means the caller
-// is the legacy per-source TUI, which still describes the v2 views.
+// is the old per-source TUI, which still describes the legacy eight-tab views.
 func viewHelpBindings(tabs []string) []key.Binding {
 	if len(tabs) == 0 {
-		tabs = reportTabsForMode(uiModeV2)
+		tabs = reportTabsForMode(uiModeLegacy)
 	}
 	bindings := make([]key.Binding, 0, len(tabs))
 	for index, tab := range tabs {
@@ -493,10 +496,10 @@ func versionOrPath(t model.Tool) string {
 	return t.Path
 }
 
-// baseInventoryRows builds the legacy per-source view's rows, keeping only
+// baseInventoryRows builds the old per-source view's rows, keeping only
 // those whose name case-insensitively contains filter. Routing them through
-// InventoryRow is what lets the legacy pane share the semantic per-row
-// coloring and the Status/Source columns with the v2 report pane.
+// InventoryRow is what lets that pane share the semantic per-row coloring
+// and the Status/Source columns with the report pane.
 func baseInventoryRows(tools []model.Tool, filter string) []InventoryRow {
 	lowerFilter := strings.ToLower(filter)
 	rows := make([]InventoryRow, 0, len(tools))
@@ -552,8 +555,8 @@ func (m tuiModel) contentLines(width, height int) []string {
 	if m.report != nil {
 		return m.reportContentLines(width, height)
 	}
-	// The legacy per-source TUI has no report and so no marks: multi-select is a
-	// v2/v3 report-pane capability, and nil is the empty set.
+	// The old per-source TUI has no report and so no marks: multi-select is a
+	// legacy/intent report-pane capability, and nil is the empty set.
 	return padPane(m.inventoryPane(m.baseRows, m.content.Cursor(), nil, width, height), width, height)
 }
 
