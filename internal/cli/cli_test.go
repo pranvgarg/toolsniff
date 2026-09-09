@@ -759,3 +759,29 @@ func TestCapabilityProbeHintCountsUnprobedEligibleResults(t *testing.T) {
 		t.Fatalf("unprobedVersionEligibleCount = %d, want 1", got)
 	}
 }
+
+func TestRunRefusesNonDarwinBeforeScanning(t *testing.T) {
+	original := hostGOOS
+	hostGOOS = "linux"
+	t.Cleanup(func() { hostGOOS = original })
+
+	var out, errOut bytes.Buffer
+	code := Run([]string{"--list"}, nil, &out, &errOut)
+	if code != 1 {
+		t.Fatalf("Run on non-darwin = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "macOS-only") {
+		t.Fatalf("stderr missing macOS-only message: %s", errOut.String())
+	}
+}
+
+func TestRunAllowsVersionAndHelpOnNonDarwin(t *testing.T) {
+	original := hostGOOS
+	hostGOOS = "linux"
+	t.Cleanup(func() { hostGOOS = original })
+
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"--version"}, nil, &out, &errOut); code != 0 {
+		t.Fatalf("Run(--version) on non-darwin = %d: %s", code, errOut.String())
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,10 @@ import (
 	"github.com/pranvgarg/toolsniff/registry"
 	"github.com/pranvgarg/toolsniff/scanner"
 )
+
+// hostGOOS is runtime.GOOS behind a variable so tests can simulate other
+// platforms without cross-compiling. Never reassigned outside tests.
+var hostGOOS = runtime.GOOS
 
 // Run executes the toolsniff command and returns the process exit status.
 // Keeping process I/O at the boundary makes command-line behavior testable
@@ -45,6 +50,12 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 		}
 		return 2
 	}
+
+	if hostGOOS != "darwin" && !options.version {
+		fmt.Fprintf(errorOutput, "toolsniff is macOS-only today (running on %s)\n", hostGOOS)
+		return 1
+	}
+
 	appVersion := version.Current()
 
 	if err := validateMode(options); err != nil {
