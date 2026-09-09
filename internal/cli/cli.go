@@ -388,6 +388,11 @@ func dispatchReport(options cliOptions, settings config.Settings, registrations 
 			return 1
 		}
 		fmt.Fprintln(outputWriter, string(data))
+		if !options.capabilitiesProbe {
+			if n := unprobedVersionEligibleCount(results); n > 0 {
+				fmt.Fprintf(errorOutput, "%d tool(s) support version probing — rerun with --capabilities-probe for version detail\n", n)
+			}
+		}
 		writeWarnings(errorOutput, warnings)
 	case options.snapshot:
 		observations := nonHistoryObservations(installedObservations, availableObservations)
@@ -596,6 +601,26 @@ func writeProfile(path string, value profile.Profile) error {
 		return fmt.Errorf("profile: replacing %s: %w", path, err)
 	}
 	return nil
+}
+
+func unprobedVersionEligibleCount(results []capabilities.Result) int {
+	count := 0
+	for _, result := range results {
+		if result.Capability.Kind != model.CapabilityVersionProbe {
+			continue
+		}
+		probed := false
+		for _, evidence := range result.Capability.Evidence {
+			if evidence.Type == "probe" {
+				probed = true
+				break
+			}
+		}
+		if !probed {
+			count++
+		}
+	}
+	return count
 }
 
 func renderObservationDiff(diff registry.ObservationDiff) string {

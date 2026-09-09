@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pranvgarg/toolsniff/capabilities"
 	"github.com/pranvgarg/toolsniff/config"
 	"github.com/pranvgarg/toolsniff/internal/update"
 	"github.com/pranvgarg/toolsniff/model"
@@ -741,4 +742,20 @@ func toolsEqual(a, b []model.Tool) bool {
 		}
 	}
 	return true
+}
+
+func TestCapabilityProbeHintCountsUnprobedEligibleResults(t *testing.T) {
+	results := []capabilities.Result{
+		{Capability: model.Capability{Kind: model.CapabilityVersionProbe, Evidence: []model.CapabilityEvidence{
+			{Type: "filesystem", Source: "PATH", Detail: "active executable"},
+		}}},
+		{Capability: model.Capability{Kind: model.CapabilityVersionProbe, Evidence: []model.CapabilityEvidence{
+			{Type: "filesystem", Source: "PATH", Detail: "active executable"},
+			{Type: "probe", Source: "/usr/local/bin/rg", Detail: "version=14.1.0"},
+		}}},
+	}
+	got := unprobedVersionEligibleCount(results)
+	if got != 1 {
+		t.Fatalf("unprobedVersionEligibleCount = %d, want 1", got)
+	}
 }
