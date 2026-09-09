@@ -43,7 +43,7 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 		errorOutput = io.Discard
 	}
 
-	options, err := parseFlags(args, errorOutput)
+	options, flagSet, err := parseFlags(args, errorOutput)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -51,9 +51,19 @@ func Run(args []string, input io.Reader, outputWriter io.Writer, errorOutput io.
 		return 2
 	}
 
-	if hostGOOS != "darwin" && !options.version {
+	if hostGOOS != "darwin" && !options.version && options.completion == "" {
 		fmt.Fprintf(errorOutput, "toolsniff is macOS-only today (running on %s)\n", hostGOOS)
 		return 1
+	}
+
+	if options.completion != "" {
+		script, err := renderCompletionScript(options.completion, flagSet)
+		if err != nil {
+			fmt.Fprintln(errorOutput, err)
+			return 2
+		}
+		fmt.Fprint(outputWriter, script)
+		return 0
 	}
 
 	appVersion := version.Current()
@@ -132,12 +142,13 @@ type cliOptions struct {
 	yes               bool
 	version           bool
 	initConfig        bool
+	completion        string
 	configPath        string
 	legacyTabs        bool
 	intentTabs        bool
 }
 
-func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
+func parseFlags(args []string, errorOutput io.Writer) (cliOptions, *flag.FlagSet, error) {
 	flags := flag.NewFlagSet("toolsniff", flag.ContinueOnError)
 	flags.SetOutput(errorOutput)
 
@@ -159,12 +170,13 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 	flags.BoolVar(&options.yes, "yes", false, "confirm --update without prompting")
 	flags.BoolVar(&options.version, "version", false, "print the toolsniff version and exit")
 	flags.BoolVar(&options.initConfig, "init-config", false, "write a starter TOML config to --config's path and exit")
+	flags.StringVar(&options.completion, "completion", "", "print a shell completion script for bash, zsh, or fish, and exit")
 	flags.StringVar(&options.configPath, "config", config.DefaultConfigPath(), "path to the TOML configuration file")
 	flags.BoolVar(&options.legacyTabs, "legacy-tabs", false, "use the original eight-tab layout instead of the intent-based tabs")
 	flags.BoolVar(&options.intentTabs, "intent-tabs", false, "use the intent-based four-tab layout (Manage/Discover/Review/Health) instead of the eight-tab layout")
 
 	if err := flags.Parse(args); err != nil {
-		return cliOptions{}, err
+		return cliOptions{}, nil, err
 	}
 	flags.Visit(func(flag *flag.Flag) {
 		switch flag.Name {
@@ -176,7 +188,7 @@ func parseFlags(args []string, errorOutput io.Writer) (cliOptions, error) {
 			options.supportSet = true
 		}
 	})
-	return options, nil
+	return options, flags, nil
 }
 
 func validateMode(options cliOptions) error {

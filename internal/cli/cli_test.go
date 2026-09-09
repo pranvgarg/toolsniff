@@ -634,7 +634,7 @@ func TestResolveUIModeKeepsConfiguredLegacyDefault(t *testing.T) {
 
 func TestParseFlagsLegacyTabs(t *testing.T) {
 	var errorOutput bytes.Buffer
-	options, err := parseFlags([]string{"--legacy-tabs"}, &errorOutput)
+	options, _, err := parseFlags([]string{"--legacy-tabs"}, &errorOutput)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -642,7 +642,7 @@ func TestParseFlagsLegacyTabs(t *testing.T) {
 		t.Fatal("--legacy-tabs did not set options.legacyTabs")
 	}
 
-	options, err = parseFlags(nil, &errorOutput)
+	options, _, err = parseFlags(nil, &errorOutput)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -653,7 +653,7 @@ func TestParseFlagsLegacyTabs(t *testing.T) {
 
 func TestParseFlagsIntentTabs(t *testing.T) {
 	var errorOutput bytes.Buffer
-	options, err := parseFlags([]string{"--intent-tabs"}, &errorOutput)
+	options, _, err := parseFlags([]string{"--intent-tabs"}, &errorOutput)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestParseFlagsIntentTabs(t *testing.T) {
 		t.Fatal("--intent-tabs did not set options.intentTabs")
 	}
 
-	options, err = parseFlags(nil, &errorOutput)
+	options, _, err = parseFlags(nil, &errorOutput)
 	if err != nil {
 		t.Fatalf("parseFlags: %v", err)
 	}
@@ -674,7 +674,7 @@ func TestParseFlagsIntentTabs(t *testing.T) {
 // nobody can find is not a rollback switch.
 func TestParseFlagsHelpListsUIModeFlags(t *testing.T) {
 	var errorOutput bytes.Buffer
-	if _, err := parseFlags([]string{"--help"}, &errorOutput); !errors.Is(err, flag.ErrHelp) {
+	if _, _, err := parseFlags([]string{"--help"}, &errorOutput); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseFlags(--help) error = %v, want flag.ErrHelp", err)
 	}
 	usage := errorOutput.String()
@@ -783,5 +783,31 @@ func TestRunAllowsVersionAndHelpOnNonDarwin(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"--version"}, nil, &out, &errOut); code != 0 {
 		t.Fatalf("Run(--version) on non-darwin = %d: %s", code, errOut.String())
+	}
+}
+
+func TestCompletionFlagPrintsScript(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := Run([]string{"--completion", "zsh"}, nil, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("Run(--completion zsh) = %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "--legacy-tabs") {
+		t.Fatalf("zsh completion missing a known flag: %s", out.String())
+	}
+}
+
+func TestCompletionFlagWorksOnNonDarwin(t *testing.T) {
+	original := hostGOOS
+	hostGOOS = "linux"
+	t.Cleanup(func() { hostGOOS = original })
+
+	var out, errOut bytes.Buffer
+	code := Run([]string{"--completion", "bash"}, nil, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("Run(--completion bash) on non-darwin = %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "--version") {
+		t.Fatalf("bash completion missing a known flag: %s", out.String())
 	}
 }
