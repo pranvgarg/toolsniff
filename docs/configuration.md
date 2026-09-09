@@ -78,6 +78,19 @@ files are:
 observations, while `toolsniff --diff --available` also compares PATH
 availability.
 
+Both files use the v2 registry envelope after a save:
+
+```json
+{
+  "schema_version": 2,
+  "observations": []
+}
+```
+
+Legacy v1 JSON arrays are accepted and converted in memory. A successful
+`--save` writes the converted v2 form atomically. Read-only modes such as
+`--doctor`, `--json`, and `--snapshot` do not rewrite the registry.
+
 `theme.preset` controls the complete TUI palette. Available presets are
 `toolsniff`, `midnight`, `nord`, `mono`, and `high-contrast`. Individual
 semantic colors can override a preset without changing source code. The active
@@ -96,6 +109,7 @@ Environment values take priority over the TOML file:
 | Variable | Purpose |
 | --- | --- |
 | `TOOLSNIFF_CONFIG` | Configuration file path |
+| `TOOLSNIFF_THEME` | TUI theme preset |
 | `TOOLSNIFF_APPLICATION_ROOTS` | PATH-list of application roots |
 | `TOOLSNIFF_PATH_DIRECTORIES` | PATH-list of directories to scan |
 | `TOOLSNIFF_PATH_EXCLUDE` | PATH-list of additional exclusions |
@@ -122,3 +136,58 @@ Each result has a source and a role:
 
 The same name from two installation sources remains separate. Exact duplicate
 observations from the same source and path are deduplicated.
+
+## Command Modes
+
+The scan-backed modes use the configured scanners and registry unless noted:
+
+| Mode | Behavior |
+| --- | --- |
+| `--doctor` | Prints typed, read-only health issues and package-to-location provenance. It does not save baselines or alter configuration. |
+| `--snapshot` | Saves installed and available observations, excluding history, under `~/.toolsniff/snapshots/`. Snapshot files are timestamped and written atomically. |
+| `--snapshots` | Lists valid snapshots newest-first without scanning and without loading the TOML configuration. |
+| `--export-profile FILE` | Scans and writes a sanitized profile to `FILE`. |
+| `--compare-profile FILE` | Scans, loads a profile, and prints typed additions, removals, updates, and other observation changes. |
+| `--support-bundle FILE` | Scans and writes the narrower sanitized support-bundle form to `FILE`. |
+| `--capabilities` | Scans and prints JSON results only for capabilities supported by explicit metadata or evidence. It does not run executable probes. |
+| `--capabilities --capabilities-probe` | Enables bounded `--version` probes for active executable observations. The probe flag is only valid with `--capabilities`. |
+
+Only one report, snapshot, profile, support, or update mode can be selected at
+once. `FILE` may be relative or absolute; parent directories are created with
+owner-only permissions when toolsniff writes an export.
+
+## TUI Filters
+
+The interactive TUI has intent-oriented views for `all`, `installed`,
+`available`, `changes`, `issues`, and `history`. Press `/` for plain search or
+`f` for the filter drawer. The input accepts normal text and optional ANDed
+facets:
+
+```text
+gemini
+source:npm gemini
+kind:application
+version:unknown
+status:updated
+view:history
+```
+
+Facet values within one facet are alternatives; populated facets are combined
+with AND semantics. Regex is not enabled. Press `Enter` to open read-only
+details for a row; `Esc` closes the current mode or clears active filters.
+`p`, `c`, and `o` prepare a path, observation JSON value, or Finder reveal
+command for the selected row without executing a shell command.
+
+## Safe Execution and Privacy
+
+Package-manager commands are executed directly with the configured
+`execution.timeout` (8 seconds by default). The normal scan does not probe
+arbitrary executables for versions. Capability detection is evidence-based;
+names alone are never treated as capability evidence.
+
+`--export-profile` and `--support-bundle` redact home paths as `$HOME`, redact
+likely secret assignments, omit raw evidence and probe payloads, and clear
+location hashes. Normal local inventory output is not redacted because paths
+are part of its purpose. See
+[`observation-model-v2.md`](observation-model-v2.md) for the complete schema
+and privacy contract.

@@ -32,6 +32,17 @@ func AvailabilityPath(path string) string {
 // means there's no baseline yet, so every real install will show as new. A
 // corrupt file is treated the same way, but with a warning explaining why.
 func Load(path string) (tools []model.Tool, warning string) {
+	observations, warning := LoadObservations(path)
+	if warning != "" {
+		return nil, warning
+	}
+	return toolsFromObservations(observations), ""
+}
+
+// LoadObservations reads either a v2 envelope or a legacy v1 tool array. A
+// missing file is not an error; malformed and unsupported files return a
+// warning and an empty baseline without modifying the file.
+func LoadObservations(path string) (observations []model.Observation, warning string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -40,15 +51,26 @@ func Load(path string) (tools []model.Tool, warning string) {
 		return nil, fmt.Sprintf("registry: reading %s: %v (treating as empty baseline)", path, err)
 	}
 
-	if err := json.Unmarshal(data, &tools); err != nil {
+	observations, err = decodeRegistry(data)
+	if err != nil {
 		return nil, fmt.Sprintf("registry: parsing %s: %v (treating as empty baseline)", path, err)
 	}
-	return tools, ""
+	return observations, ""
 }
 
 // Save writes the current scan as the new baseline, creating the parent
 // directory if needed.
 func Save(path string, tools []model.Tool) error {
+	return saveObservations(path, observationsFromTools(tools), false)
+}
+
+// SaveObservations writes a v2 registry envelope atomically. The input is
+// copied before canonical sorting so callers retain ownership of their slice.
+func SaveObservations(path string, observations []model.Observation) error {
+	return saveObservations(path, observations, true)
+}
+
+func saveObservations(path string, observations []model.Observation, canonicalize bool) error {
 	if path == "" {
 		return fmt.Errorf("registry: empty path")
 	}
@@ -59,7 +81,22 @@ func Save(path string, tools []model.Tool) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return fmt.Errorf("registry: securing directory: %w", err)
 	}
-	data, err := json.MarshalIndent(tools, "", "  ")
+	canonical := append([]model.Observation(nil), observations...)
+	if canonical == nil {
+		canonical = []model.Observation{}
+	}
+	for i, observation := range canonical {
+		if err := observation.Validate(); err != nil {
+			return fmt.Errorf("registry: validating observation %d: %w", i, err)
+		}
+	}
+	if canonicalize {
+		sortObservations(canonical)
+	}
+	data, err := json.MarshalIndent(Envelope{
+		SchemaVersion: CurrentSchemaVersion,
+		Observations:  canonical,
+	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("registry: marshaling: %w", err)
 	}

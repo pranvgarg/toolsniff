@@ -47,6 +47,23 @@ The splash screen receives the same value through `main.go` and displays:
 toolsniff  v0.1.0
 ```
 
+## v2 Schema Compatibility
+
+Application version and data schema version are separate:
+
+| Data | Current schema | Compatibility rule |
+| --- | ---: | --- |
+| Registry and availability baseline | 2 | v1 arrays migrate on load; a successful save writes the v2 envelope |
+| Scan report JSON | 2 | `schema_version` is part of the report contract |
+| Snapshot | 1 | Immutable observation snapshot with a producer `version` field |
+| Profile and support bundle | 1 | Sanitized portable observation contracts |
+
+Changes to observation identity, version-state meanings, required JSON fields,
+or migration behavior are data-contract changes. Treat incompatible changes as
+major releases. Additive fields and new typed change categories should still be
+called out in release notes and covered by schema tests. The detailed contract
+is in [`observation-model-v2.md`](observation-model-v2.md).
+
 ## Release Steps
 
 Run the verification suite on the release commit:
@@ -57,6 +74,20 @@ go test -race ./...
 go vet ./...
 go build ./...
 ```
+
+Also exercise the v2 user-facing modes with a temporary configuration and
+registry where practical:
+
+```bash
+./toolsniff --version
+./toolsniff --json
+./toolsniff --doctor
+./toolsniff --snapshot
+./toolsniff --capabilities
+```
+
+Check that profile and support-bundle output contains no unredacted home path,
+and that a v1 registry fixture can be loaded and saved as schema version 2.
 
 Create and push an annotated tag from the merged `main` branch:
 
@@ -194,3 +225,8 @@ The application uses one canonical display value:
 
 The normalization prevents a `v` prefix from being duplicated if release
 tooling passes `v1.2.3` instead of `1.2.3`.
+
+The version displayed by `--version` identifies the toolsniff binary. It is not
+the observation `version.state` field. Observation version states are
+`known`, `unknown`, `not-applicable`, and `not-reported`; their meanings and
+comparison behavior are documented in the v2 model reference.

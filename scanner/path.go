@@ -18,6 +18,8 @@ type PathScanner struct {
 	ignoreNames map[string]struct{}
 	readDir     DirReader
 	stat        FileStat
+	lstat       FileStat
+	readlink    func(string) (string, error)
 }
 
 func NewPathScanner(directories, excluded, ignoreNames []string) *PathScanner {
@@ -34,6 +36,8 @@ func NewPathScanner(directories, excluded, ignoreNames []string) *PathScanner {
 		ignoreNames: ignored,
 		readDir:     defaultDirReader,
 		stat:        defaultFileStat,
+		lstat:       defaultFileLstat,
+		readlink:    defaultReadlink,
 	}
 }
 

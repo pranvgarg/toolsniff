@@ -43,3 +43,45 @@ func (s *BunScanner) Scan() ([]model.Tool, error) {
 	}
 	return tools, nil
 }
+
+// ScanObservations exposes Bun's resolved global executable directory as v2
+// locations without claiming package or version metadata that was not reported.
+func (s *BunScanner) ScanObservations() ([]model.Observation, error) {
+	tools, err := s.Scan()
+	if err != nil {
+		return nil, err
+	}
+	return BunObservationsFromTools(tools), nil
+}
+
+func BunObservationsFromTools(tools []model.Tool) []model.Observation {
+	observations := make([]model.Observation, 0, len(tools))
+	for _, tool := range tools {
+		observation := model.Observation{
+			DisplayName: tool.Name,
+			CommandName: tool.Name,
+			Kind:        model.KindExecutable,
+			Role:        model.RoleInstalled,
+			Origin: model.Origin{
+				Provider: "bun",
+				Manager:  "global",
+			},
+			Version:      packageVersionInfo("", "filesystem"),
+			Availability: model.AvailabilityInfo{State: model.AvailabilityUnknown},
+			Evidence: []model.Evidence{{
+				Type:   "filesystem",
+				Source: "bun pm bin -g",
+			}},
+		}
+		if tool.Path != "" {
+			observation.Locations = []model.Location{{
+				Path:       tool.Path,
+				Type:       model.LocationExecutable,
+				Executable: true,
+			}}
+		}
+		observation.ID = model.ObservationIdentity(observation)
+		observations = append(observations, observation)
+	}
+	return observations
+}

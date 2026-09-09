@@ -39,3 +39,50 @@ func (s *CargoScanner) Scan() ([]model.Tool, error) {
 	}
 	return tools, nil
 }
+
+// ScanObservations adapts cargo's executable discovery to the v2 model. Cargo
+// does not provide package metadata in this directory listing, so no package
+// identity or version is fabricated.
+func (s *CargoScanner) ScanObservations() ([]model.Observation, error) {
+	tools, err := s.Scan()
+	if err != nil {
+		return nil, err
+	}
+	return CargoObservationsFromTools(tools), nil
+}
+
+func CargoObservationsFromTools(tools []model.Tool) []model.Observation {
+	observations := make([]model.Observation, 0, len(tools))
+	for _, tool := range tools {
+		observations = append(observations, cargoObservation(tool))
+	}
+	return observations
+}
+
+func cargoObservation(tool model.Tool) model.Observation {
+	observation := model.Observation{
+		DisplayName: tool.Name,
+		CommandName: tool.Name,
+		Kind:        model.KindExecutable,
+		Role:        model.RoleInstalled,
+		Origin: model.Origin{
+			Provider: "cargo",
+			Manager:  "install",
+		},
+		Version:      packageVersionInfo("", "filesystem"),
+		Availability: model.AvailabilityInfo{State: model.AvailabilityUnknown},
+		Evidence: []model.Evidence{{
+			Type:   "filesystem",
+			Source: "cargo bin directory",
+		}},
+	}
+	if tool.Path != "" {
+		observation.Locations = []model.Location{{
+			Path:       tool.Path,
+			Type:       model.LocationExecutable,
+			Executable: true,
+		}}
+	}
+	observation.ID = model.ObservationIdentity(observation)
+	return observation
+}

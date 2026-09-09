@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -19,52 +20,120 @@ const compactWidthThreshold = 60
 // is accounted for separately by callers of contentPaneHeight.
 const frameChromeRows = 3
 
-// frameFixedCols is the number of columns the bordered frame spends on
-// borders and padding around the sidebar and content columns:
-// "│ " + sidebar + " │ " + content + " │".
-const frameFixedCols = 7
+// sidebarCountGap is the gutter between a sidebar label and its right-aligned
+// count, in cells. DESIGN.md > Layout > Spacing (`md`).
+const sidebarCountGap = 2
 
-// sidebarLabel returns the display label for a tab, appending a warning
-// glyph to the "new" tab so it stands out even when not the active tab.
-func sidebarLabel(tab string) string {
-	if tab == newTabID {
-		return "new ⚠"
+// itoa is a local shorthand; sidebar and badge widths are computed from the
+// decimal form of counts often enough to be worth naming.
+func itoa(v int) string { return strconv.Itoa(v) }
+
+// frameHorizontalChrome is the number of columns the frame spends on borders
+// and padding around the sidebar and content columns. It is measured from the
+// styles that draw them rather than hard-coded, so changing a padding in
+// tui_styles.go can never desynchronize the layout budget from the render.
+func frameHorizontalChrome(styles ThemeStyles) int {
+	return styles.FramePane.GetHorizontalFrameSize() +
+		styles.SidebarPane.GetHorizontalFrameSize() +
+		styles.ContentPane.GetHorizontalFrameSize()
+}
+
+// tabDisplayLabel is the human name for a tab id. The report tab ids are
+// slugs ("path-executables"); the sidebar shows what they mean instead, so the
+// navigation reads as English and never shows a bare "available". Anything not
+// a report view (a legacy per-source tab) is shown as-is.
+func tabDisplayLabel(tab string) string {
+	switch ViewCategory(tab) {
+	case ViewOverview:
+		return "overview"
+	case ViewCLI:
+		return "CLI tools"
+	case ViewPackages:
+		return "packages"
+	case ViewApplications:
+		return "applications"
+	case ViewPathExecutables:
+		return "on your PATH"
+	case ViewNpxHistory:
+		return "npx history"
+	case ViewChanges:
+		return "changes"
+	case ViewIssues:
+		return "issues"
 	}
 	return tab
 }
 
+// sidebarLabel returns the display label for a tab, appending a warning
+// glyph to alerting tabs so they stand out even when not active.
+func sidebarLabel(tab string, alert bool, styles ThemeStyles) string {
+	label := tabDisplayLabel(tab)
+	if alert {
+		return label + " " + styles.Glyph.Warning
+	}
+	return label
+}
+
+// tabAlerts marks the tabs that carry a problem the user should notice: the
+// old per-source "new since last scan" tab, and the legacy "issues" tab when
+// it is not empty. An alerting tab with nothing in it is noise, so zero never
+// alerts.
+func tabAlerts(tab string, count int) bool {
+	if tab == newTabID {
+		return true
+	}
+	return tab == string(ViewIssues) && count > 0
+}
+
 // sidebarDims returns the label column width and count column width needed
-// to fit every tab's row without truncation.
-func sidebarDims(tabs []string, toolsBySrc map[string][]model.Tool) (labelWidth, countWidth int) {
+// to fit every tab's row without truncation. Widths are display cells
+// (lipgloss.Width), never rune counts: the warning glyph is a wide rune on
+// some terminals and padding it with fmt's %-*s is what misaligned the count
+// column. See DESIGN.md > Do's and Don'ts.
+func sidebarDims(tabs []string, toolsBySrc map[string][]model.Tool, styles ThemeStyles) (labelWidth, countWidth int) {
 	countWidth = 2
 	for _, t := range tabs {
-		if w := lipgloss.Width(sidebarLabel(t)); w > labelWidth {
+		count := len(toolsBySrc[t])
+		if w := lipgloss.Width(sidebarLabel(t, tabAlerts(t, count), styles)); w > labelWidth {
 			labelWidth = w
 		}
-		if w := len(fmt.Sprintf("%d", len(toolsBySrc[t]))); w > countWidth {
+		if w := lipgloss.Width(itoa(count)); w > countWidth {
 			countWidth = w
 		}
 	}
 	return labelWidth, countWidth
 }
 
-// sidebarWidth returns the total rendered width of the sidebar column,
-// including the leading number+space prefix.
-func sidebarWidth(tabs []string, toolsBySrc map[string][]model.Tool) int {
-	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc)
-	// "▸N " + label + " " + count. The leading indicator reserves space
-	// for every row so selection never shifts the sidebar layout.
-	return 3 + labelWidth + 1 + countWidth
+// sidebarWidth returns the rendered width of the sidebar column's content,
+// excluding the pane's own padding and divider.
+func (m tuiModel) sidebarWidth() int {
+	labelWidth, countWidth := sidebarDims(m.tabs, m.toolsBySrc, m.styles)
+	// "▎N " + label + gutter + count. The selection bar and jump number are
+	// reserved on every row so selection never shifts the layout.
+	return 3 + labelWidth + sidebarCountGap + countWidth
 }
 
-// contentPaneWidth returns the width available to the content pane given
-// the total frame width and the sidebar's width.
-func contentPaneWidth(width, sbWidth int) int {
-	w := width - sbWidth - frameFixedCols
+// contentWidth returns the width available to the content pane.
+func (m tuiModel) contentWidth() int {
+	w := m.frameWidth() - m.sidebarWidth() - frameHorizontalChrome(m.styles)
 	if w < 10 {
 		w = 10
 	}
 	return w
+}
+
+func (m tuiModel) frameWidth() int {
+	if m.width <= 0 {
+		return 80
+	}
+	return m.width
+}
+
+func (m tuiModel) frameHeight() int {
+	if m.height <= 0 {
+		return 24
+	}
+	return m.height
 }
 
 // contentPaneHeight returns the number of content/sidebar rows available
@@ -87,9 +156,8 @@ func fitWidth(s string, width int) string {
 }
 
 // rightAlign left-pads s with spaces so it occupies exactly width display
-// cells (used for the content table's version column, which bubbles/table
-// has no built-in alignment option for). If s is already at or beyond
-// width, it is returned unchanged and left to the table's own truncation.
+// cells. If s is already at or beyond width, it is returned unchanged and
+// left to the caller's own truncation.
 func rightAlign(s string, width int) string {
 	w := lipgloss.Width(s)
 	if w >= width {
@@ -100,9 +168,9 @@ func rightAlign(s string, width int) string {
 
 // truncateTail truncates s to at most width display cells by dropping
 // characters from the *front* and prefixing an ellipsis, so the tail of s
-// survives. Used for the content table's Version column when it's showing
-// a filesystem path fallback, where the suffix (e.g. the binary name) is
-// far more identifying than the shared prefix every path starts with.
+// survives. Used for the Version column when it is showing a filesystem path
+// fallback, where the suffix (e.g. the binary name) is far more identifying
+// than the shared prefix every path starts with.
 func truncateTail(s string, width int) string {
 	if width <= 0 {
 		return ""
@@ -123,31 +191,34 @@ func truncateTail(s string, width int) string {
 // renderHeaderLine builds the top border line, with the wordmark, tagline,
 // and stats stamp embedded directly into the border, e.g.:
 //
-//	┌─ ◆ toolsniff ─ dev & AI CLI inventory ── ... ── 47 tools · 6 sources ─┐
+//	╭─ ◆ toolsniff ─ dev & AI CLI inventory ── ... ── 47 installed · 6 sources ─╮
+//
+// lipgloss has no notion of a titled border, so this one line is composed by
+// hand; every other join in the frame is declarative.
 func renderHeaderLine(width int, title, tagline, stats string, styles ThemeStyles) string {
+	border := lipgloss.RoundedBorder()
 	inner := width - 2
 	if inner < 0 {
 		inner = 0
 	}
 
 	build := func(tagline, stats string) (left, right string) {
-		left = styles.HeaderBorder.Render("─ ") + styles.HeaderTitle.Render(title)
+		left = styles.HeaderBorder.Render(border.Top+" ") + styles.HeaderTitle.Render(title)
 		if tagline != "" {
-			left += styles.HeaderBorder.Render(" ─ ") + styles.HeaderTagline.Render(tagline)
+			left += styles.HeaderBorder.Render(" "+border.Top+" ") + styles.HeaderTagline.Render(tagline)
 		}
 		left += styles.HeaderBorder.Render(" ")
 		right = styles.HeaderBorder.Render(" ")
 		if stats != "" {
 			right += styles.HeaderStats.Render(stats) + styles.HeaderBorder.Render(" ")
 		}
-		right += styles.HeaderBorder.Render("─")
+		right += styles.HeaderBorder.Render(border.Top)
 		return left, right
 	}
 
-	// At narrow widths (~60-64 cols) the fixed-width left/right components
-	// don't fit alongside the corners. Rather than let the line overflow
-	// and get clipped, progressively drop the tagline, then the stats
-	// stamp, until it fits.
+	// At narrow widths the fixed-width left/right components don't fit
+	// alongside the corners. Rather than let the line overflow and get
+	// clipped, progressively drop the tagline, then the stats stamp.
 	left, right := build(tagline, stats)
 	fillLen := inner - lipgloss.Width(left) - lipgloss.Width(right)
 	if fillLen < 1 {
@@ -161,41 +232,59 @@ func renderHeaderLine(width int, title, tagline, stats string, styles ThemeStyle
 	if fillLen < 1 {
 		fillLen = 1
 	}
-	fill := styles.HeaderBorder.Render(strings.Repeat("─", fillLen))
+	fill := styles.HeaderBorder.Render(strings.Repeat(border.Top, fillLen))
 
-	return styles.HeaderBorder.Render("┌") + left + fill + right + styles.HeaderBorder.Render("┐")
+	return styles.HeaderBorder.Render(border.TopLeft) + left + fill + right +
+		styles.HeaderBorder.Render(border.TopRight)
 }
 
-// renderSidebarLines renders one row per tab (numbered, active-styled),
-// padded/truncated to rowCount rows so it lines up with the content pane.
-func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model.Tool, rowCount int, styles ThemeStyles) []string {
-	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc)
-	width := 3 + labelWidth + 1 + countWidth
+// renderSidebarLines renders one row per tab: selection bar, jump number,
+// left-aligned label, and a count right-aligned to a shared column so the
+// numbers scan vertically. Padded to rowCount rows so it lines up with the
+// content pane.
+//
+// focused is whether the keyboard is on the sidebar layer. The active tab keeps
+// its active styling either way -- it is still the open view -- but only a
+// focused sidebar draws the selection bar, so the bar always marks what the
+// movement keys are about to move. The column is reserved on every row
+// regardless, so gaining or losing focus never shifts the labels.
+func renderSidebarLines(tabs []string, active int, focused bool, toolsBySrc map[string][]model.Tool, rowCount int, styles ThemeStyles) []string {
+	labelWidth, countWidth := sidebarDims(tabs, toolsBySrc, styles)
+	width := 3 + labelWidth + sidebarCountGap + countWidth
 
 	lines := make([]string, 0, rowCount)
 	for i, t := range tabs {
 		if i >= rowCount {
 			break
 		}
-		indicator := " "
-		if i == active {
-			indicator = "▸"
-		}
-		row := fmt.Sprintf("%s%d %-*s %*d", indicator, i+1, labelWidth, sidebarLabel(t), countWidth, len(toolsBySrc[t]))
-		row = fitWidth(row, width)
+		count := len(toolsBySrc[t])
+		alert := tabAlerts(t, count)
 
-		var styled string
+		labelStyle, countStyle := styles.Tab, styles.Count
 		switch {
-		case i == active && t == newTabID:
-			styled = styles.ActiveNewTab.Render(row)
+		case i == active && alert:
+			labelStyle, countStyle = styles.ActiveNewTab, styles.ActiveNewTab
 		case i == active:
-			styled = styles.ActiveTab.Render(row)
-		case t == newTabID:
-			styled = styles.NewTab.Render(row)
-		default:
-			styled = styles.Tab.Render(row)
+			labelStyle, countStyle = styles.ActiveTab, styles.ActiveCount
+		case alert:
+			labelStyle, countStyle = styles.NewTab, styles.NewTab
 		}
-		lines = append(lines, styled)
+
+		bar := " "
+		if i == active && focused {
+			bar = styles.SelectionBar.Render(styles.Glyph.Selection)
+		}
+
+		label := fitWidth(sidebarLabel(t, alert, styles), labelWidth)
+		countCell := rightAlign(itoa(count), countWidth)
+
+		lines = append(lines, lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			bar,
+			labelStyle.Render(itoa(i+1)+" "+label),
+			strings.Repeat(" ", sidebarCountGap),
+			countStyle.Render(countCell),
+		))
 	}
 	for len(lines) < rowCount {
 		lines = append(lines, fitWidth("", width))
@@ -203,71 +292,100 @@ func renderSidebarLines(tabs []string, active int, toolsBySrc map[string][]model
 	return lines
 }
 
+// frameStats builds the header's right-hand stamp.
+func (m tuiModel) frameStats() string {
+	var installedTools, availableCommands, sourceCount int
+	if m.report != nil {
+		installedTools = len(m.report.report.Installed)
+		availableCommands = len(m.report.report.Available)
+		seenSources := make(map[string]struct{})
+		for _, observation := range m.report.report.AllObservations() {
+			if observation.Role != model.RoleHistory {
+				seenSources[ObservationSource(observation)] = struct{}{}
+			}
+		}
+		sourceCount = len(seenSources)
+	} else {
+		currentTools := append(append([]model.Tool{}, m.realTools...), m.available...)
+		installedTools, availableCommands = countToolRoles(currentTools)
+		sourceCount = countSources(currentTools)
+		if installedTools == 0 && availableCommands == 0 {
+			// On a genuinely empty scan, tabs falls back to a ["npm"]
+			// placeholder so there's something to render, but that's not a
+			// real source: report 0, matching --list's "0 tools across 0
+			// sources" convention for an empty machine.
+			sourceCount = 0
+		}
+	}
+	// "available" is a scanner word: to a user that set is "commands on your
+	// PATH that no manager installed". The stamp says so.
+	return fmt.Sprintf("%d installed · %d on your PATH · %d sources", installedTools, availableCommands, sourceCount)
+}
+
 // renderFrame draws the full bordered frame: header, vertical sidebar,
-// content pane, and footer.
+// content pane, separator, and footer. Everything below the header line is
+// composed with lipgloss borders and joins; no column budget is spelled out
+// as a literal.
 func (m tuiModel) renderFrame() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	height := m.height
-	if height <= 0 {
-		height = 24
-	}
-
-	currentTools := append(append([]model.Tool{}, m.realTools...), m.available...)
-	installedTools, availableCommands := countToolRoles(currentTools)
-	sourceCount := countSources(currentTools)
-	if installedTools == 0 && availableCommands == 0 {
-		// On a genuinely empty scan, tabs falls back to a ["npm"]
-		// placeholder so there's something to render, but that's not a
-		// real source: report 0, matching --list's "0 tools across 0
-		// sources" convention for an empty machine.
-		sourceCount = 0
-	}
-	stats := fmt.Sprintf("%d installed · %d available · %d sources", installedTools, availableCommands, sourceCount)
-
-	top := renderHeaderLine(width, "◆ toolsniff", "dev & AI CLI inventory", stats, m.styles)
+	width, height := m.frameWidth(), m.frameHeight()
+	border := lipgloss.RoundedBorder()
 
 	footerLines := m.footerLines()
-
-	sbWidth := sidebarWidth(m.tabs, m.toolsBySrc)
-	cWidth := contentPaneWidth(width, sbWidth)
+	cWidth := m.contentWidth()
 	rowCount := contentPaneHeight(height, len(footerLines))
 
-	sidebarLines := renderSidebarLines(m.tabs, m.activeTab, m.toolsBySrc, rowCount, m.styles)
-	contentLines := strings.Split(m.content.View(), "\n")
+	sidebar := m.styles.SidebarPane.Render(lipgloss.JoinVertical(
+		lipgloss.Left,
+		renderSidebarLines(m.tabs, m.activeTab, m.sidebarFocused(), m.toolsBySrc, rowCount, m.styles)...,
+	))
+	content := m.styles.ContentPane.Render(lipgloss.JoinVertical(
+		lipgloss.Left,
+		m.contentLines(cWidth, rowCount)...,
+	))
+	body := m.styles.FramePane.Render(lipgloss.JoinHorizontal(lipgloss.Top, sidebar, content))
 
-	rows := make([]string, rowCount)
-	for i := 0; i < rowCount; i++ {
-		var contentLine string
-		if i < len(contentLines) {
-			contentLine = contentLines[i]
-		}
-		rows[i] = "│ " + sidebarLines[i] + " │ " + fitWidth(contentLine, cWidth) + " │"
+	// The T-junction has to land on the measured sidebar boundary; lipgloss
+	// has no junction primitive, so this one line is composed by hand from the
+	// same border set the panes use.
+	sidebarSpan := lipgloss.Width(sidebar) - m.styles.SidebarPane.GetBorderRightSize()
+	contentSpan := width - 2 - sidebarSpan - 1
+	if contentSpan < 0 {
+		contentSpan = 0
 	}
+	separator := m.styles.HeaderBorder.Render(
+		border.MiddleLeft +
+			strings.Repeat(border.Top, sidebarSpan) +
+			border.MiddleBottom +
+			strings.Repeat(border.Top, contentSpan) +
+			border.MiddleRight,
+	)
 
-	sep := "├" + strings.Repeat("─", sbWidth+2) + "┴" + strings.Repeat("─", cWidth+2) + "┤"
-	sep = m.styles.HeaderBorder.Render(sep)
-
-	// Each line of the footer gets its own bordered row: a multi-line
-	// footer (the full key-binding help, toggled via "?") must not be
-	// wrapped in a single "│ ... │" pair, which would only border the
-	// first and last visual line and break the box drawing for the rest.
 	footerBlock := make([]string, len(footerLines))
 	for i, line := range footerLines {
-		footerBlock[i] = "│ " + fitWidth(line, width-4) + " │"
+		footerBlock[i] = fitWidth(line, width-frameFooterChrome(m.styles))
 	}
+	footer := m.styles.FramePane.Render(m.styles.ContentPane.Render(
+		lipgloss.JoinVertical(lipgloss.Left, footerBlock...),
+	))
 
-	bottom := m.styles.HeaderBorder.Render("└" + strings.Repeat("─", width-2) + "┘")
+	bottom := m.styles.HeaderBorder.Render(
+		border.BottomLeft + strings.Repeat(border.Bottom, width-2) + border.BottomRight,
+	)
 
-	lines := make([]string, 0, rowCount+3+len(footerBlock))
-	lines = append(lines, top)
-	lines = append(lines, rows...)
-	lines = append(lines, sep)
-	lines = append(lines, footerBlock...)
-	lines = append(lines, bottom)
-	return strings.Join(lines, "\n")
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		renderHeaderLine(width, m.styles.Glyph.Brand+" toolsniff", "dev & AI CLI inventory", m.frameStats(), m.styles),
+		body,
+		separator,
+		footer,
+		bottom,
+	)
+}
+
+// frameFooterChrome is the horizontal budget the footer row spends on the
+// frame border plus its own padding.
+func frameFooterChrome(styles ThemeStyles) int {
+	return styles.FramePane.GetHorizontalFrameSize() + styles.ContentPane.GetHorizontalFrameSize()
 }
 
 // renderCompact draws the <60-col fallback: a single-line tab strip in
@@ -276,21 +394,33 @@ func (m tuiModel) renderCompact() string {
 	parts := make([]string, len(m.tabs))
 	for i, t := range m.tabs {
 		count := len(m.toolsBySrc[t])
+		alert := tabAlerts(t, count)
 		if i == m.activeTab {
-			label := fmt.Sprintf("[%d %s·%d]", i+1, t, count)
-			if t == newTabID {
+			label := fmt.Sprintf("%d %s·%d", i+1, tabDisplayLabel(t), count)
+			if alert {
 				parts[i] = m.styles.ActiveNewTab.Render(label)
 			} else {
 				parts[i] = m.styles.ActiveTab.Render(label)
 			}
 			continue
 		}
-		label := fmt.Sprintf("%d", i+1)
-		if t == newTabID {
-			parts[i] = m.styles.NewTab.Render(label + "⚠")
+		label := itoa(i + 1)
+		if alert {
+			parts[i] = m.styles.NewTab.Render(label + m.styles.Glyph.Warning)
 		} else {
 			parts[i] = m.styles.Tab.Render(label)
 		}
 	}
-	return strings.Join(parts, " ")
+	return lipgloss.JoinHorizontal(lipgloss.Top, joinWithSpaces(parts)...)
+}
+
+func joinWithSpaces(parts []string) []string {
+	out := make([]string, 0, len(parts)*2)
+	for i, p := range parts {
+		if i > 0 {
+			out = append(out, " ")
+		}
+		out = append(out, p)
+	}
+	return out
 }

@@ -42,6 +42,44 @@ var wordmarkLines = []string{
 	`   ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝    ╚══════╝╚═╝  ╚═══╝╚═╝╚═╝     ╚═╝`,
 }
 
+// compactWordmarkLines is the condensed lockup used between the plain-text
+// fallback and the full wordmark. The full "TOOLSNIFF" block needs 76 columns
+// plus the frame's 2, which an 80-column terminal only just misses once any
+// terminal padding is involved; this form fits comfortably at 80 so a standard
+// window still gets branding instead of the bare text fallback.
+var compactWordmarkLines = []string{
+	`╭─╮╭─╮╭─╮╷   ╭─╮╭╮╷╷╭─╴╭─╴`,
+	`│ ││ ││ ││   ╰─╮│╰┤│├─╴├─╴`,
+	`╰─╯╰─╯╰─╯╰─╴ ╰─╯╵ ╵╵╵  ╵  `,
+}
+
+// dissolveFraction estimates how far a dissolving wordmark has progressed by
+// comparing it against the original, so a differently-sized lockup can be
+// dissolved to the same degree without threading animation state through the
+// render signature.
+func dissolveFraction(lines []string) float64 {
+	if len(lines) != len(wordmarkLines) {
+		return 0
+	}
+	var total, gone float64
+	for i, line := range lines {
+		original, current := []rune(wordmarkLines[i]), []rune(line)
+		for j, r := range original {
+			if r == ' ' {
+				continue
+			}
+			total++
+			if j >= len(current) || current[j] != r {
+				gone++
+			}
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return gone / total
+}
+
 // splashDissolveTickMsg fires on each dissolve animation frame.
 type splashDissolveTickMsg struct{}
 
@@ -62,8 +100,15 @@ func splashDissolveCmd() tea.Cmd {
 // rune has, independently, a prob chance of being replaced by a space or a
 // dim placeholder character, simulating the wordmark breaking apart.
 func dissolveWordmark(prob float64) []string {
-	out := make([]string, len(wordmarkLines))
-	for i, line := range wordmarkLines {
+	return dissolveLines(wordmarkLines, prob)
+}
+
+func dissolveLines(source []string, prob float64) []string {
+	if prob <= 0 {
+		return source
+	}
+	out := make([]string, len(source))
+	for i, line := range source {
 		runes := []rune(line)
 		for j, r := range runes {
 			if r == ' ' {
@@ -139,7 +184,22 @@ func renderSplash(lines []string, width, height int, version string, styles Them
 	versionLine := styles.Version.Render("toolsniff  v" + version)
 
 	var block string
-	if width-2 < wordmarkWidth() {
+	if width-2 < wordmarkWidth() && width-2 >= linesWidth(compactWordmarkLines) {
+		// Too narrow for the full ASCII lockup but wide enough for the
+		// condensed one: an 80-column terminal should still get a branded
+		// splash rather than dropping straight to the text fallback.
+		source := dissolveLines(compactWordmarkLines, dissolveFraction(lines))
+		styledWordmark := make([]string, len(source))
+		for i, l := range source {
+			styledWordmark[i] = styles.Wordmark.Render(l)
+		}
+		block = lipgloss.JoinVertical(
+			lipgloss.Center,
+			lipgloss.JoinVertical(lipgloss.Left, styledWordmark...),
+			"",
+			versionLine,
+		)
+	} else if width-2 < wordmarkWidth() {
 		// Terminal too narrow for the ASCII wordmark: it would overflow the
 		// border and get clipped by the terminal itself. Fall back to a
 		// plain text lockup instead, same graceful-degradation approach the
@@ -159,9 +219,11 @@ func renderSplash(lines []string, width, height int, version string, styles Them
 }
 
 // wordmarkWidth returns the widest line in wordmarkLines, in cells.
-func wordmarkWidth() int {
+func wordmarkWidth() int { return linesWidth(wordmarkLines) }
+
+func linesWidth(lines []string) int {
 	max := 0
-	for _, l := range wordmarkLines {
+	for _, l := range lines {
 		if w := lipgloss.Width(l); w > max {
 			max = w
 		}

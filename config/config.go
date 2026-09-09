@@ -18,6 +18,7 @@ type Settings struct {
 	Path         PathSettings
 	Bun          BunSettings
 	Theme        ThemeSettings
+	UI           UISettings
 	NPXDir       string
 	CargoBinDir  string
 	RegistryPath string
@@ -38,6 +39,11 @@ type PathSettings struct {
 
 type BunSettings struct {
 	Enabled bool
+}
+
+// UISettings controls TUI tab layout.
+type UISettings struct {
+	Mode string `toml:"mode"` // "legacy" = 8-tab kind-first, "intent" = 4-tab intent-based
 }
 
 // ThemeSettings contains the selected preset and any user color overrides.
@@ -80,6 +86,9 @@ type fileConfig struct {
 		Preset string      `toml:"preset"`
 		Colors ThemeColors `toml:"colors"`
 	} `toml:"theme"`
+	UI struct {
+		Mode string `toml:"mode"`
+	} `toml:"ui"`
 	NPX struct {
 		Dir string `toml:"dir"`
 	} `toml:"npx"`
@@ -130,6 +139,7 @@ func DefaultSettings() Settings {
 		},
 		Bun:          BunSettings{Enabled: true},
 		Theme:        DefaultThemeSettings(),
+		UI:           UISettings{Mode: "legacy"},
 		NPXDir:       defaultNPXDir(),
 		CargoBinDir:  defaultCargoBinDir(),
 		RegistryPath: defaultRegistryPath(),
@@ -181,6 +191,9 @@ func applyFileConfig(settings *Settings, file fileConfig) error {
 	}
 	if err := applyThemeConfig(&settings.Theme, file.Theme.Preset, file.Theme.Colors); err != nil {
 		return err
+	}
+	if file.UI.Mode != "" {
+		settings.UI.Mode = file.UI.Mode
 	}
 	if file.NPX.Dir != "" {
 		settings.NPXDir = expandPath(file.NPX.Dir)
@@ -291,6 +304,47 @@ func SaveTheme(path string, theme ThemeSettings) error {
 	data, err := toml.Marshal(raw)
 	if err != nil {
 		return fmt.Errorf("config: serializing %s: %w", path, err)
+	}
+	return writeConfigAtomically(path, data)
+}
+
+// WriteDefaultConfig writes DefaultSettings() to path as a starter TOML
+// file. It refuses to clobber an existing file unless overwrite is true, so
+// --init-config is safe to run twice by accident but --init-config --yes can
+// deliberately reset a broken config.
+func WriteDefaultConfig(path string, overwrite bool) error {
+	if path == "" {
+		return fmt.Errorf("config: empty config path")
+	}
+	path = expandPath(path)
+	if !overwrite {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("config: %s already exists (pass --yes to overwrite)", path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("config: checking %s: %w", path, err)
+		}
+	}
+
+	defaults := DefaultSettings()
+	var file fileConfig
+	file.Applications.Roots = defaults.Applications.Roots
+	file.Applications.IgnorePath = defaults.Applications.IgnorePath
+	file.Path.Directories = defaults.Path.Directories
+	file.Path.Excluded = defaults.Path.Excluded
+	file.Path.IgnoreNames = defaults.Path.IgnoreNames
+	enabled := defaults.Bun.Enabled
+	file.Bun.Enabled = &enabled
+	file.Theme.Preset = defaults.Theme.Preset
+	file.Theme.Colors = defaults.Theme.Colors
+	file.UI.Mode = defaults.UI.Mode
+	file.NPX.Dir = defaults.NPXDir
+	file.Cargo.BinDir = defaults.CargoBinDir
+	file.Registry.Path = defaults.RegistryPath
+	file.Execution.Timeout = defaults.ExecTimeout.String()
+
+	data, err := toml.Marshal(file)
+	if err != nil {
+		return fmt.Errorf("config: serializing default config: %w", err)
 	}
 	return writeConfigAtomically(path, data)
 }

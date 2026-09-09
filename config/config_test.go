@@ -7,6 +7,41 @@ import (
 	"time"
 )
 
+func TestConfigUIModeDefaultsToLegacy(t *testing.T) {
+	settings := DefaultSettings()
+	if settings.UI.Mode != "legacy" {
+		t.Fatalf("default ui.mode = %q, want legacy", settings.UI.Mode)
+	}
+}
+
+func TestLoadUIModeFromTOML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\nmode = \"intent\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settings.UI.Mode != "intent" {
+		t.Fatalf("ui.mode = %q, want intent", settings.UI.Mode)
+	}
+}
+
+func TestLoadOmittedUIModeKeepsDefault(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[execution]\ntimeout = \"3s\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if settings.UI.Mode != "legacy" {
+		t.Fatalf("ui.mode = %q, want legacy", settings.UI.Mode)
+	}
+}
+
 func TestLoadMissingFileReturnsDiscoveryDefaults(t *testing.T) {
 	t.Setenv("PATH", filepath.Join(t.TempDir(), "bin"))
 	settings, err := Load(filepath.Join(t.TempDir(), "missing.toml"))
@@ -155,5 +190,39 @@ func TestSaveThemePreservesOtherConfiguration(t *testing.T) {
 	}
 	if settings.ExecTimeout != 12*time.Second {
 		t.Fatalf("expected execution timeout to be preserved, got %s", settings.ExecTimeout)
+	}
+}
+
+func TestWriteDefaultConfigWritesLoadableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := WriteDefaultConfig(path, false); err != nil {
+		t.Fatalf("WriteDefaultConfig: %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after WriteDefaultConfig: %v", err)
+	}
+	if settings.UI.Mode != "legacy" {
+		t.Fatalf("ui.mode = %q, want legacy", settings.UI.Mode)
+	}
+}
+
+func TestWriteDefaultConfigRefusesToOverwriteWithoutFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\nmode = \"intent\"\n"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	if err := WriteDefaultConfig(path, false); err == nil {
+		t.Fatal("WriteDefaultConfig(overwrite=false) did not refuse an existing file")
+	}
+	if err := WriteDefaultConfig(path, true); err != nil {
+		t.Fatalf("WriteDefaultConfig(overwrite=true): %v", err)
+	}
+	settings, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if settings.UI.Mode != "legacy" {
+		t.Fatalf("overwrite did not reset ui.mode, got %q", settings.UI.Mode)
 	}
 }

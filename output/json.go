@@ -42,3 +42,20 @@ func RenderJSON(tools, available, npxHistory []model.Tool, diff, availabilityDif
 	}
 	return json.MarshalIndent(report, "", "  ")
 }
+
+// RenderObservationJSON renders the v2 report used by the migrated CLI. The
+// legacy RenderJSON function remains available to direct callers.
+func RenderObservationJSON(report ObservationReport) ([]byte, error) {
+	return json.MarshalIndent(report, "", "  ")
+}
+
+// RenderReportJSON is a descriptive alias for callers that do not need to
+// distinguish the report's domain type from its JSON representation.
+func RenderReportJSON(report ObservationReport) ([]byte, error) {
+	return RenderObservationJSON(report)
+}
+
+// RenderJSONV2 is kept as an obvious migration target for the future CLI.
+func RenderJSONV2(report ObservationReport) ([]byte, error) {
+	return RenderObservationJSON(report)
+}
